@@ -1,18 +1,31 @@
+# FastAPI framework & server
 fastapi>=0.110
 uvicorn[standard]>=0.23
-pydantic[email]>=2.6
-email-validator>=2.1
 python-multipart>=0.0.9
 
+# Data validation
+pydantic[email]>=2.6
+email-validator>=2.1
+
+# Environment variables
 python-dotenv>=1.0
+
+# OpenAI API (summarizer, quiz, etc.)
 openai>=1.30
 
+# Document parsing
 PyPDF2>=3.0
 python-docx>=1.1
 python-pptx>=0.6
 beautifulsoup4>=4.12
 lxml>=5.2
 chardet>=5.2
+
+# Data processing
 pandas>=2.2
 openpyxl>=3.1
+
+# Authentication & security
 bcrypt>=4.1.2
+passlib[bcrypt]>=1.7.4
+python-jose[cryptography]>=3.3.0
