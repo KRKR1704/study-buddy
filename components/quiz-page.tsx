@@ -1,7 +1,6 @@
 "use client"
 
 import type React from "react"
-
 import { useState } from "react"
 import { Upload, FileText, ArrowRight, CheckCircle, Loader2, Brain, Play } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -16,27 +15,34 @@ interface QuizPageProps {
 type QuizStep = "upload" | "processing" | "ready"
 type ProcessingStep = 1 | 2 | 3
 
+type Flashcard = { front: string; back: string }
+type QuizItem =
+  | { question: string; options: string[]; answerIndex: number; explanation?: string; category?: string }
+  | any // be flexible with shapes from backend
+
+const API_URL = "http://127.0.0.1:8000/api/summarize/"
+
 export function QuizPage({ onBackToDashboard, onStartQuiz }: QuizPageProps) {
   const [currentStep, setCurrentStep] = useState<QuizStep>("upload")
   const [processingStep, setProcessingStep] = useState<ProcessingStep>(1)
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
   const [dragActive, setDragActive] = useState(false)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+
+  // simple metadata
+  const [title, setTitle] = useState<string>("Quiz")
 
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
-    if (e.type === "dragenter" || e.type === "dragover") {
-      setDragActive(true)
-    } else if (e.type === "dragleave") {
-      setDragActive(false)
-    }
+    if (e.type === "dragenter" || e.type === "dragover") setDragActive(true)
+    else if (e.type === "dragleave") setDragActive(false)
   }
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
     setDragActive(false)
-
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       const newFiles = Array.from(e.dataTransfer.files)
       setUploadedFiles(newFiles)
@@ -48,22 +54,6 @@ export function QuizPage({ onBackToDashboard, onStartQuiz }: QuizPageProps) {
       const newFiles = Array.from(e.target.files)
       setUploadedFiles(newFiles)
     }
-  }
-
-  const startProcessing = () => {
-    setCurrentStep("processing")
-    setProcessingStep(1)
-
-    // Simulate processing steps
-    setTimeout(() => {
-      setProcessingStep(2)
-      setTimeout(() => {
-        setProcessingStep(3)
-        setTimeout(() => {
-          setCurrentStep("ready")
-        }, 2000)
-      }, 3000)
-    }, 2500)
   }
 
   const getStepStatus = (step: ProcessingStep) => {
@@ -85,6 +75,71 @@ export function QuizPage({ onBackToDashboard, onStartQuiz }: QuizPageProps) {
     }
   }
 
+  async function startProcessing() {
+    if (uploadedFiles.length === 0 || isSubmitting) return
+
+    // Clear previous quiz/flashcards so we never show stale data
+    localStorage.removeItem("sb_quiz")
+    localStorage.removeItem("sb_flashcards")
+
+    // File type guard (match your backend support)
+    const allowed = [
+      ".pdf", ".docx", ".pptx", ".txt", ".rtf", ".md", ".markdown", ".html", ".htm", ".csv", ".xlsx", ".epub"
+    ]
+    const name = uploadedFiles[0].name
+    const ext = `.${(name.split(".").pop() || "").toLowerCase()}`
+    if (!allowed.includes(ext)) {
+      alert("Unsupported file type. Please upload a text document (PDF/DOCX/PPTX/TXT/RTF/MD/HTML/CSV/XLSX/EPUB).")
+      return
+    }
+
+    setIsSubmitting(true)
+    setCurrentStep("processing")
+    setProcessingStep(1)
+
+    // staged UX progress while the network call happens
+    const timers: number[] = []
+    timers.push(window.setTimeout(() => setProcessingStep(2), 1000))
+    timers.push(window.setTimeout(() => setProcessingStep(3), 2000))
+
+    try {
+      const file = uploadedFiles[0]
+      setTitle(file.name.replace(/\.[^.]+$/, "") || "Quiz")
+
+      const form = new FormData()
+      form.append("file", file)
+
+      const res = await fetch(API_URL, { method: "POST", body: form })
+      const json = await res.json()
+
+      if (!json?.success) {
+        alert(json?.error || "Quiz generation failed on the server.")
+        setCurrentStep("upload")
+        return
+      }
+
+      // expected: { success: true, data: { summary, flashcards, quiz } }
+      const data = json.data || {}
+      const cards = Array.isArray(data.flashcards) ? (data.flashcards as Flashcard[]) : []
+      const quiz = Array.isArray(data.quiz) ? (data.quiz as QuizItem[]) : []
+
+      // Save fresh results for the QuizViewer to read
+      localStorage.setItem("sb_flashcards", JSON.stringify(cards))
+      localStorage.setItem("sb_quiz", JSON.stringify(quiz))
+
+      // small delay so users see step 3
+      await new Promise((r) => setTimeout(r, 500))
+      setCurrentStep("ready")
+    } catch (err) {
+      console.error(err)
+      alert("Something went wrong while generating the quiz. Please try again.")
+      setCurrentStep("upload")
+    } finally {
+      setIsSubmitting(false)
+      timers.forEach((t) => window.clearTimeout(t))
+    }
+  }
+
   const renderUploadStep = () => (
     <div className="max-w-4xl mx-auto">
       <div className="mb-8">
@@ -92,12 +147,12 @@ export function QuizPage({ onBackToDashboard, onStartQuiz }: QuizPageProps) {
           <Brain className="h-8 w-8" />
           Interactive Quiz Generator
         </h2>
-        <p className="text-gray-600">Upload your documents and get AI-generated quizzes to test your knowledge</p>
+        <p className="text-gray-600">Upload your document to generate an AI-powered quiz from that exact file.</p>
       </div>
 
       <Card className="mb-6">
         <CardHeader>
-          <CardTitle>Upload Documents for Quiz</CardTitle>
+          <CardTitle>Upload Document for Quiz</CardTitle>
         </CardHeader>
         <CardContent>
           <div
@@ -110,26 +165,27 @@ export function QuizPage({ onBackToDashboard, onStartQuiz }: QuizPageProps) {
             onDrop={handleDrop}
           >
             <Upload className="mx-auto h-12 w-12 text-gray-400 mb-4" />
-            <p className="text-lg font-medium text-gray-900 mb-2">Drop files here or click to browse</p>
-            <p className="text-sm text-gray-500 mb-4">Support for PDF, DOC, TXT, and more</p>
+            <p className="text-lg font-medium text-gray-900 mb-2">Drop file here or click to browse</p>
+            <p className="text-sm text-gray-500 mb-4">
+              Supports PDF, DOCX, PPTX, TXT, RTF, MD/Markdown, HTML/HTM, CSV, XLSX, EPUB
+            </p>
             <input
               type="file"
-              multiple
               onChange={handleFileInput}
               className="hidden"
               id="quiz-file-input"
-              accept=".pdf,.doc,.docx,.txt,.ppt,.pptx"
+              accept=".pdf,.docx,.pptx,.txt,.rtf,.md,.markdown,.html,.htm,.csv,.xlsx,.epub"
             />
             <Button asChild>
               <label htmlFor="quiz-file-input" className="cursor-pointer">
-                Choose Files
+                Choose File
               </label>
             </Button>
           </div>
 
           {uploadedFiles.length > 0 && (
             <div className="mt-6">
-              <h4 className="font-medium mb-3">Selected Files:</h4>
+              <h4 className="font-medium mb-3">Selected File:</h4>
               <div className="space-y-2">
                 {uploadedFiles.map((file, index) => (
                   <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
@@ -161,10 +217,10 @@ export function QuizPage({ onBackToDashboard, onStartQuiz }: QuizPageProps) {
         </Button>
         <Button
           onClick={startProcessing}
-          disabled={uploadedFiles.length === 0}
+          disabled={uploadedFiles.length === 0 || isSubmitting}
           className="bg-green-600 hover:bg-green-700"
         >
-          Generate Quiz
+          {isSubmitting ? "Generating..." : "Generate Quiz"}
           <ArrowRight className="ml-2 h-4 w-4" />
         </Button>
       </div>
@@ -227,14 +283,8 @@ export function QuizPage({ onBackToDashboard, onStartQuiz }: QuizPageProps) {
           <div className="flex justify-center">
             <div className="flex space-x-2">
               <div className="w-3 h-3 bg-green-500 rounded-full animate-bounce"></div>
-              <div
-                className="w-3 h-3 bg-green-500 rounded-full animate-bounce"
-                style={{ animationDelay: "0.1s" }}
-              ></div>
-              <div
-                className="w-3 h-3 bg-green-500 rounded-full animate-bounce"
-                style={{ animationDelay: "0.2s" }}
-              ></div>
+              <div className="w-3 h-3 bg-green-500 rounded-full animate-bounce" style={{ animationDelay: "0.1s" }}></div>
+              <div className="w-3 h-3 bg-green-500 rounded-full animate-bounce" style={{ animationDelay: "0.2s" }}></div>
             </div>
           </div>
         </div>
@@ -246,35 +296,10 @@ export function QuizPage({ onBackToDashboard, onStartQuiz }: QuizPageProps) {
     <div className="max-w-4xl mx-auto text-center">
       <div className="mb-8">
         <h2 className="text-3xl font-bold text-gray-900 mb-2">Quiz Ready!</h2>
-        <p className="text-gray-600">Your interactive quiz has been generated and is ready to start</p>
+        <p className="text-gray-600">Your interactive quiz has been generated from: <span className="font-semibold">{title}</span></p>
       </div>
 
-      {/* Quiz Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-        <Card>
-          <CardContent className="p-6 text-center">
-            <Brain className="h-12 w-12 mx-auto mb-3 text-green-600" />
-            <p className="text-2xl font-bold text-gray-900">10</p>
-            <p className="text-sm text-gray-600">Questions Generated</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-6 text-center">
-            <FileText className="h-12 w-12 mx-auto mb-3 text-blue-600" />
-            <p className="text-2xl font-bold text-gray-900">~15 min</p>
-            <p className="text-sm text-gray-600">Estimated Time</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-6 text-center">
-            <CheckCircle className="h-12 w-12 mx-auto mb-3 text-purple-600" />
-            <p className="text-2xl font-bold text-gray-900">Mixed</p>
-            <p className="text-sm text-gray-600">Difficulty Levels</p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Quiz Preview */}
+      {/* Simple stats (optional static) */}
       <Card className="mb-8">
         <CardHeader>
           <CardTitle>Quiz Preview</CardTitle>
@@ -283,14 +308,7 @@ export function QuizPage({ onBackToDashboard, onStartQuiz }: QuizPageProps) {
           <div className="text-left space-y-4">
             <div className="p-4 bg-blue-50 rounded-lg">
               <h4 className="font-semibold text-blue-900 mb-2">Sample Question:</h4>
-              <p className="text-gray-700">
-                "What is the primary difference between supervised and unsupervised learning?"
-              </p>
-            </div>
-            <div className="text-center text-sm text-gray-600">
-              <p>✓ Multiple choice questions with detailed explanations</p>
-              <p>✓ Instant feedback after each answer</p>
-              <p>✓ Final score and performance analysis</p>
+              <p className="text-gray-700">Open the quiz to see all generated questions and explanations.</p>
             </div>
           </div>
         </CardContent>

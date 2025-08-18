@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { ChevronLeft, ChevronRight, RotateCcw, Eye, EyeOff, ArrowLeft, FileText } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -12,78 +12,73 @@ interface FlashcardViewerProps {
   onBackToDashboard: () => void
 }
 
-interface Flashcard {
+type Difficulty = "easy" | "medium" | "hard"
+
+interface FlashcardData {
+  front: string
+  back: string
+}
+
+interface FlashcardUI {
   id: number
   front: string
   back: string
   category: string
-  difficulty: "easy" | "medium" | "hard"
+  difficulty: Difficulty
+}
+
+function inferDifficulty(text: string): Difficulty {
+  const len = text.replace(/\s+/g, " ").trim().length
+  if (len < 60) return "easy"
+  if (len < 180) return "medium"
+  return "hard"
 }
 
 export function FlashcardViewer({ onBack, onViewQuiz, onBackToDashboard }: FlashcardViewerProps) {
   const [currentIndex, setCurrentIndex] = useState(0)
   const [isFlipped, setIsFlipped] = useState(false)
-  const [showAnswer, setShowAnswer] = useState(false)
 
-  // Sample flashcards based on the ML document
-  const flashcards: Flashcard[] = [
-    {
-      id: 1,
-      front: "What is Machine Learning?",
-      back: "Machine Learning is a subset of artificial intelligence that focuses on the development of algorithms and statistical models that enable computer systems to improve their performance on a specific task through experience, without being explicitly programmed.",
-      category: "Definition",
-      difficulty: "easy",
-    },
-    {
-      id: 2,
-      front: "What are the three main types of Machine Learning?",
-      back: "1. Supervised Learning - Learning with labeled training data\n2. Unsupervised Learning - Finding hidden patterns without labeled examples\n3. Reinforcement Learning - Learning through interaction with environment",
-      category: "Types",
-      difficulty: "medium",
-    },
-    {
-      id: 3,
-      front: "What is the difference between overfitting and underfitting?",
-      back: "Overfitting occurs when a model learns the training data too well, including noise, leading to poor generalization. Underfitting occurs when a model is too simple to capture the underlying patterns in the data.",
-      category: "Concepts",
-      difficulty: "hard",
-    },
-    {
-      id: 4,
-      front: "What are Neural Networks?",
-      back: "Neural Networks are computing systems inspired by biological neural networks, consisting of interconnected nodes (neurons) that process information through weighted connections and activation functions.",
-      category: "Architecture",
-      difficulty: "medium",
-    },
-    {
-      id: 5,
-      front: "What is Deep Learning?",
-      back: "Deep Learning is a subset of machine learning using neural networks with multiple layers (deep networks) to model and understand complex patterns in data.",
-      category: "Advanced",
-      difficulty: "hard",
-    },
-    {
-      id: 6,
-      front: "Why is data quality important in Machine Learning?",
-      back: "Data quality is crucial because machine learning models learn from data. Poor quality data leads to poor model performance. High-quality, relevant, and representative data is essential for building effective ML systems.",
-      category: "Data",
-      difficulty: "easy",
-    },
-    {
-      id: 7,
-      front: "What is the bias-variance tradeoff?",
-      back: "The bias-variance tradeoff is the balance between a model's ability to minimize bias (error from oversimplifying) and variance (error from sensitivity to small fluctuations). Finding the right balance is key to good model performance.",
-      category: "Concepts",
-      difficulty: "hard",
-    },
-    {
-      id: 8,
-      front: "What is feature selection?",
-      back: "Feature selection is the process of selecting the most relevant and important features (input variables) for building machine learning models, which helps improve performance and reduce complexity.",
-      category: "Preprocessing",
-      difficulty: "medium",
-    },
-  ]
+  // Load generated flashcards from localStorage
+  const flashcards: FlashcardUI[] = useMemo(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const raw = localStorage.getItem("sb_flashcards")
+        if (raw) {
+          const parsed = JSON.parse(raw) as FlashcardData[]
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return parsed.map((fc, i) => ({
+              id: i + 1,
+              front: fc.front || `Card ${i + 1}`,
+              back: fc.back || "",
+              category: "General",
+              difficulty: inferDifficulty((fc.front || "") + " " + (fc.back || "")),
+            }))
+          }
+        }
+      } catch {}
+    }
+
+    // Fallback demo content (only used if nothing in localStorage)
+    const demo: FlashcardUI[] = [
+      {
+        id: 1,
+        front: "What is Machine Learning?",
+        back: "ML enables systems to learn from data without explicit programming.",
+        category: "Definition",
+        difficulty: "easy",
+      },
+      {
+        id: 2,
+        front: "Three main types of ML?",
+        back: "Supervised, Unsupervised, Reinforcement.",
+        category: "Types",
+        difficulty: "medium",
+      },
+    ]
+    return demo
+  }, [])
+
+  const [showAnswer, setShowAnswer] = useState(false)
 
   const nextCard = () => {
     setCurrentIndex((prev) => (prev + 1) % flashcards.length)
@@ -102,7 +97,7 @@ export function FlashcardViewer({ onBack, onViewQuiz, onBackToDashboard }: Flash
     setShowAnswer(!showAnswer)
   }
 
-  const getDifficultyColor = (difficulty: string) => {
+  const getDifficultyColor = (difficulty: Difficulty) => {
     switch (difficulty) {
       case "easy":
         return "bg-green-100 text-green-800"
@@ -110,8 +105,6 @@ export function FlashcardViewer({ onBack, onViewQuiz, onBackToDashboard }: Flash
         return "bg-yellow-100 text-yellow-800"
       case "hard":
         return "bg-red-100 text-red-800"
-      default:
-        return "bg-gray-100 text-gray-800"
     }
   }
 
@@ -125,10 +118,24 @@ export function FlashcardViewer({ onBack, onViewQuiz, onBackToDashboard }: Flash
         flipCard()
       }
     }
-
     window.addEventListener("keydown", handleKeyPress)
     return () => window.removeEventListener("keydown", handleKeyPress)
-  }, [])
+  }, [isFlipped])
+
+  if (!flashcards.length) {
+    return (
+      <div className="flex-1 p-6">
+        <div className="max-w-3xl mx-auto text-center">
+          <p className="text-gray-700">No flashcards found. Generate a summary first.</p>
+          <Button variant="outline" className="mt-4" onClick={onBackToDashboard}>
+            Back to Dashboard
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
+  const current = flashcards[currentIndex]
 
   return (
     <div className="flex-1 p-6 bg-gradient-to-br from-blue-50 to-purple-50 min-h-screen">
@@ -143,7 +150,7 @@ export function FlashcardViewer({ onBack, onViewQuiz, onBackToDashboard }: Flash
             <div>
               <h2 className="text-3xl font-bold text-gray-900">Flash Cards</h2>
               <p className="text-gray-600">
-                Card {currentIndex + 1} of {flashcards.length} • Machine Learning Concepts
+                Card {currentIndex + 1} of {flashcards.length}
               </p>
             </div>
           </div>
@@ -153,10 +160,10 @@ export function FlashcardViewer({ onBack, onViewQuiz, onBackToDashboard }: Flash
               Take Quiz
             </Button>
             <div className="flex items-center gap-2">
-              <Badge variant="outline" className={getDifficultyColor(flashcards[currentIndex].difficulty)}>
-                {flashcards[currentIndex].difficulty.toUpperCase()}
+              <Badge variant="outline" className={getDifficultyColor(current.difficulty)}>
+                {current.difficulty.toUpperCase()}
               </Badge>
-              <Badge variant="outline">{flashcards[currentIndex].category}</Badge>
+              <Badge variant="outline">{current.category}</Badge>
             </div>
           </div>
         </div>
@@ -202,10 +209,7 @@ export function FlashcardViewer({ onBack, onViewQuiz, onBackToDashboard }: Flash
                 isFlipped ? "rotate-y-180" : ""
               }`}
               onClick={flipCard}
-              style={{
-                transformStyle: "preserve-3d",
-                transform: isFlipped ? "rotateY(180deg)" : "rotateY(0deg)",
-              }}
+              style={{ transformStyle: "preserve-3d", transform: isFlipped ? "rotateY(180deg)" : "rotateY(0deg)" }}
             >
               {/* Front of Card */}
               <CardContent
@@ -215,9 +219,7 @@ export function FlashcardViewer({ onBack, onViewQuiz, onBackToDashboard }: Flash
                 <div className="mb-4">
                   <Badge className="bg-blue-100 text-blue-800 mb-4">Question</Badge>
                 </div>
-                <h3 className="text-xl font-semibold text-gray-900 mb-6 leading-relaxed">
-                  {flashcards[currentIndex].front}
-                </h3>
+                <h3 className="text-xl font-semibold text-gray-900 mb-6 leading-relaxed">{current.front}</h3>
                 <div className="mt-auto">
                   <p className="text-sm text-gray-500 flex items-center justify-center gap-2">
                     <Eye className="h-4 w-4" />
@@ -229,16 +231,13 @@ export function FlashcardViewer({ onBack, onViewQuiz, onBackToDashboard }: Flash
               {/* Back of Card */}
               <CardContent
                 className="p-8 h-full flex flex-col justify-center items-center text-center absolute inset-0 bg-blue-50"
-                style={{
-                  backfaceVisibility: "hidden",
-                  transform: "rotateY(180deg)",
-                }}
+                style={{ backfaceVisibility: "hidden", transform: "rotateY(180deg)" }}
               >
                 <div className="mb-4">
                   <Badge className="bg-green-100 text-green-800 mb-4">Answer</Badge>
                 </div>
                 <div className="flex-1 flex items-center justify-center">
-                  <p className="text-gray-700 leading-relaxed whitespace-pre-line">{flashcards[currentIndex].back}</p>
+                  <p className="text-gray-700 leading-relaxed whitespace-pre-line">{current.back}</p>
                 </div>
                 <div className="mt-auto">
                   <p className="text-sm text-gray-500 flex items-center justify-center gap-2">
@@ -304,15 +303,8 @@ export function FlashcardViewer({ onBack, onViewQuiz, onBackToDashboard }: Flash
           ))}
         </div>
 
-        {/* Keyboard Shortcuts */}
+        {/* Footer */}
         <div className="mt-8 text-center">
-          <p className="text-sm text-gray-500 mb-4">
-            Use <kbd className="px-2 py-1 bg-gray-100 rounded text-xs">←</kbd> and{" "}
-            <kbd className="px-2 py-1 bg-gray-100 rounded text-xs">→</kbd> to navigate,{" "}
-            <kbd className="px-2 py-1 bg-gray-100 rounded text-xs">Space</kbd> to flip cards
-          </p>
-
-          {/* Back to Dashboard Button */}
           <Button variant="outline" onClick={onBackToDashboard} className="mt-4">
             Back to Dashboard
           </Button>

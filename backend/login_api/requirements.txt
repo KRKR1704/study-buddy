@@ -1,8 +1,19 @@
 fastapi
 uvicorn
-pymongo
-python-dotenv
-passlib[bcrypt]
-PyJWT
+python-multipart
+
+# extraction
 PyMuPDF
-openai
+python-docx
+python-pptx
+striprtf
+beautifulsoup4
+lxml
+pandas
+openpyxl
+ebooklib
+chardet
+
+# OpenAI v1 SDK
+openai>=1.0.0
+

@@ -1,7 +1,6 @@
 "use client"
 
 import type React from "react"
-
 import { useState } from "react"
 import { Upload, FileText, ArrowRight, CheckCircle, Loader2, Eye, Brain } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -17,56 +16,40 @@ interface SummarizerPageProps {
 type SummarizerStep = "upload" | "processing" | "results"
 type ProcessingStep = 1 | 2 | 3
 
+type Flashcard = { front: string; back: string }
+type QuizItem = { question: string; options: string[]; answerIndex: number; explanation?: string }
+
+// Prefer env; fallback to local dev
+const API_BASE =
+  (process.env.NEXT_PUBLIC_API_BASE?.replace(/\/+$/, "") || "http://127.0.0.1:8000").replace(/\/+$/, "")
+const API_URL = `${API_BASE}/api/summarize/`
+
 export function SummarizerPage({ onBackToDashboard, onViewFlashcards, onViewQuiz }: SummarizerPageProps) {
   const [currentStep, setCurrentStep] = useState<SummarizerStep>("upload")
   const [processingStep, setProcessingStep] = useState<ProcessingStep>(1)
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
   const [dragActive, setDragActive] = useState(false)
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
-  // Sample summary data
-  const [summaryData] = useState({
-    title: "Introduction to Machine Learning",
-    summary: `Machine Learning is a subset of artificial intelligence that focuses on the development of algorithms and statistical models that enable computer systems to improve their performance on a specific task through experience, without being explicitly programmed.
+  // result state from backend
+  const [summary, setSummary] = useState<string>("")
+  const [keyPoints, setKeyPoints] = useState<string[]>([])
+  const [wordCount, setWordCount] = useState<number>(0)
+  const [readingTime, setReadingTime] = useState<string>("0 min")
+  const [title, setTitle] = useState<string>("Summary")
 
-Key concepts covered in this document:
-
-• **Supervised Learning**: Learning with labeled training data to make predictions on new, unseen data. Examples include classification and regression problems.
-
-• **Unsupervised Learning**: Finding hidden patterns in data without labeled examples. Common techniques include clustering and dimensionality reduction.
-
-• **Neural Networks**: Computing systems inspired by biological neural networks, consisting of interconnected nodes (neurons) that process information.
-
-• **Deep Learning**: A subset of machine learning using neural networks with multiple layers to model and understand complex patterns.
-
-• **Training Process**: The method by which algorithms learn from data, involving optimization techniques to minimize error and improve accuracy.
-
-The document emphasizes the importance of data quality, feature selection, and model evaluation in building effective machine learning systems. It also discusses common challenges such as overfitting, underfitting, and the bias-variance tradeoff.`,
-    keyPoints: [
-      "Machine Learning enables computers to learn without explicit programming",
-      "Three main types: Supervised, Unsupervised, and Reinforcement Learning",
-      "Neural Networks form the foundation of Deep Learning",
-      "Data quality is crucial for model performance",
-      "Model evaluation prevents overfitting and ensures generalization",
-    ],
-    wordCount: 1247,
-    readingTime: "5 min",
-  })
-
+  // ---------- drag & drop / file selection ----------
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
-    if (e.type === "dragenter" || e.type === "dragover") {
-      setDragActive(true)
-    } else if (e.type === "dragleave") {
-      setDragActive(false)
-    }
+    if (e.type === "dragenter" || e.type === "dragover") setDragActive(true)
+    else if (e.type === "dragleave") setDragActive(false)
   }
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
     setDragActive(false)
-
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       const newFiles = Array.from(e.dataTransfer.files)
       setUploadedFiles(newFiles)
@@ -80,20 +63,103 @@ The document emphasizes the importance of data quality, feature selection, and m
     }
   }
 
-  const startProcessing = () => {
+  // ---------- helpers ----------
+  const computeWordStats = (text: string) => {
+    const words = text.trim().split(/\s+/).filter(Boolean)
+    const wc = words.length
+    const minutes = Math.max(1, Math.ceil(wc / 200)) // ~200 wpm
+    setWordCount(wc)
+    setReadingTime(`${minutes} min`)
+  }
+
+  // ---------- main action ----------
+  const startProcessing = async () => {
+    if (uploadedFiles.length === 0 || isSubmitting) return
+
+    const allowed = [
+      ".pdf", ".docx", ".pptx", ".txt", ".rtf", ".md", ".markdown", ".html", ".htm", ".csv", ".xlsx", ".epub"
+    ]
+    const name = uploadedFiles[0].name
+    const ext = `.${(name.split(".").pop() || "").toLowerCase()}`
+    if (!allowed.includes(ext)) {
+      alert("Unsupported file type. Please upload a text document (PDF/DOCX/PPTX/TXT/RTF/MD/HTML/CSV/XLSX/EPUB).")
+      return
+    }
+
+    // clear previous results so other pages don't show stale data
+    localStorage.removeItem("sb_flashcards")
+    localStorage.removeItem("sb_quiz")
+    localStorage.removeItem("sb_summary")
+    localStorage.removeItem("sb_keypoints")
+
+    setIsSubmitting(true)
     setCurrentStep("processing")
     setProcessingStep(1)
 
-    // Simulate processing steps
-    setTimeout(() => {
-      setProcessingStep(2)
-      setTimeout(() => {
-        setProcessingStep(3)
-        setTimeout(() => {
-          setCurrentStep("results")
-        }, 2000)
-      }, 3000)
-    }, 2500)
+    const timers: number[] = []
+    timers.push(window.setTimeout(() => setProcessingStep(2), 900))
+    timers.push(window.setTimeout(() => setProcessingStep(3), 1800))
+
+    try {
+      const file = uploadedFiles[0]
+      setTitle(file.name.replace(/\.[^.]+$/, "") || "Summary")
+
+      const form = new FormData()
+      form.append("file", file)
+
+      const res = await fetch(API_URL, { method: "POST", body: form })
+      if (!res.ok) {
+        const errText = await res.text().catch(() => "")
+        throw new Error(errText || `Request failed with status ${res.status}`)
+      }
+
+      const json = await res.json()
+      if (!json?.success) {
+        throw new Error(json?.error || "Summarization failed on the server.")
+      }
+
+      // expected: { success: true, data: { summary, keyTakeaways, flashcards, quiz } }
+      const data = json.data || {}
+      const textSummary: string = data.summary || ""
+
+      setSummary(textSummary)
+      computeWordStats(textSummary)
+
+      // Prefer backend keyTakeaways; fallback to deriving if absent
+      const backendKp: string[] = Array.isArray(data.keyTakeaways) ? data.keyTakeaways : []
+      const kp = backendKp.length ? backendKp : deriveKeyPoints(textSummary)
+      setKeyPoints(kp)
+
+      // persist for other pages
+      localStorage.setItem("sb_summary", textSummary)
+      localStorage.setItem("sb_keypoints", JSON.stringify(kp))
+
+      if (Array.isArray(data.flashcards)) {
+        localStorage.setItem("sb_flashcards", JSON.stringify(data.flashcards as Flashcard[]))
+      }
+      if (Array.isArray(data.quiz)) {
+        localStorage.setItem("sb_quiz", JSON.stringify(data.quiz as QuizItem[]))
+      }
+
+      await new Promise((r) => setTimeout(r, 600))
+      setCurrentStep("results")
+    } catch (err: any) {
+      console.error(err)
+      alert(err?.message || "Something went wrong while summarizing. Please try again.")
+      setCurrentStep("upload")
+    } finally {
+      setIsSubmitting(false)
+      timers.forEach((t) => window.clearTimeout(t))
+    }
+  }
+
+  // Simple fallback bullet derivation (only used if backend didn't return keyTakeaways)
+  const deriveKeyPoints = (text: string): string[] => {
+    const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+    const bullets = lines.filter((l) => /^(\*|-|•|\d+[.)])\s+/.test(l))
+    if (bullets.length > 0) return bullets.map((b) => b.replace(/^(\*|-|•|\d+[.)])\s+/, ""))
+    const sentences = text.split(/(?<=[.!?])\s+/).filter(Boolean)
+    return sentences.slice(0, 7)
   }
 
   const getStepStatus = (step: ProcessingStep) => {
@@ -104,17 +170,13 @@ The document emphasizes the importance of data quality, feature selection, and m
 
   const getStepText = (step: ProcessingStep) => {
     switch (step) {
-      case 1:
-        return "Reading the document"
-      case 2:
-        return "Generating summary"
-      case 3:
-        return "Finalizing results"
-      default:
-        return ""
+      case 1: return "Reading the document"
+      case 2: return "Generating summary"
+      case 3: return "Finalizing results"
     }
   }
 
+  // ---------- UI sections ----------
   const renderUploadStep = () => (
     <div className="max-w-4xl mx-auto">
       <div className="mb-8">
@@ -141,14 +203,17 @@ The document emphasizes the importance of data quality, feature selection, and m
           >
             <Upload className="mx-auto h-12 w-12 text-gray-400 mb-4" />
             <p className="text-lg font-medium text-gray-900 mb-2">Drop files here or click to browse</p>
-            <p className="text-sm text-gray-500 mb-4">Support for PDF, DOC, TXT, and more</p>
+            <p className="text-sm text-gray-500 mb-4">
+              Supports PDF, DOCX, PPTX, TXT, RTF, MD/Markdown, HTML/HTM, CSV, XLSX, EPUB
+            </p>
+
             <input
               type="file"
               multiple
               onChange={handleFileInput}
               className="hidden"
               id="file-input"
-              accept=".pdf,.doc,.docx,.txt,.ppt,.pptx"
+              accept=".pdf,.docx,.pptx,.txt,.rtf,.md,.markdown,.html,.htm,.csv,.xlsx,.epub"
             />
             <Button asChild>
               <label htmlFor="file-input" className="cursor-pointer">
@@ -191,10 +256,10 @@ The document emphasizes the importance of data quality, feature selection, and m
         </Button>
         <Button
           onClick={startProcessing}
-          disabled={uploadedFiles.length === 0}
+          disabled={uploadedFiles.length === 0 || isSubmitting}
           className="bg-blue-600 hover:bg-blue-700"
         >
-          Start Summarizing
+          {isSubmitting ? "Starting..." : "Start Summarizing"}
           <ArrowRight className="ml-2 h-4 w-4" />
         </Button>
       </div>
@@ -210,7 +275,7 @@ The document emphasizes the importance of data quality, feature selection, and m
 
       <Card className="p-8">
         <div className="space-y-8">
-          {/* Progress Steps */}
+          {/* Steps */}
           <div className="flex items-center justify-center space-x-8">
             {[1, 2, 3].map((step) => (
               <div key={step} className="flex flex-col items-center">
@@ -278,21 +343,21 @@ The document emphasizes the importance of data quality, feature selection, and m
         <Card>
           <CardContent className="p-4 text-center">
             <FileText className="h-8 w-8 mx-auto mb-2 text-blue-600" />
-            <p className="text-2xl font-bold text-gray-900">{summaryData.wordCount}</p>
+            <p className="text-2xl font-bold text-gray-900">{wordCount}</p>
             <p className="text-sm text-gray-600">Words Processed</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-4 text-center">
             <Eye className="h-8 w-8 mx-auto mb-2 text-green-600" />
-            <p className="text-2xl font-bold text-gray-900">{summaryData.readingTime}</p>
+            <p className="text-2xl font-bold text-gray-900">{readingTime}</p>
             <p className="text-sm text-gray-600">Reading Time</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-4 text-center">
             <Brain className="h-8 w-8 mx-auto mb-2 text-purple-600" />
-            <p className="text-2xl font-bold text-gray-900">{summaryData.keyPoints.length}</p>
+            <p className="text-2xl font-bold text-gray-900">{keyPoints.length}</p>
             <p className="text-sm text-gray-600">Key Points</p>
           </CardContent>
         </Card>
@@ -301,11 +366,11 @@ The document emphasizes the importance of data quality, feature selection, and m
       {/* Summary Content */}
       <Card className="mb-8">
         <CardHeader>
-          <CardTitle className="text-xl">{summaryData.title}</CardTitle>
+          <CardTitle className="text-xl">{title}</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="prose max-w-none">
-            <div className="whitespace-pre-line text-gray-700 leading-relaxed">{summaryData.summary}</div>
+            <div className="whitespace-pre-line text-gray-700 leading-relaxed">{summary}</div>
           </div>
         </CardContent>
       </Card>
@@ -317,7 +382,7 @@ The document emphasizes the importance of data quality, feature selection, and m
         </CardHeader>
         <CardContent>
           <ul className="space-y-2">
-            {summaryData.keyPoints.map((point, index) => (
+            {keyPoints.map((point, index) => (
               <li key={index} className="flex items-start gap-3">
                 <CheckCircle className="h-5 w-5 text-green-500 mt-0.5 flex-shrink-0" />
                 <span className="text-gray-700">{point}</span>
