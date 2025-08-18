@@ -1,19 +1,17 @@
-fastapi
-uvicorn
-python-multipart
+fastapi>=0.110
+uvicorn[standard]>=0.23
+pydantic[email]>=2.6
+email-validator>=2.1
+python-multipart>=0.0.9
 
-# extraction
-PyMuPDF
-python-docx
-python-pptx
-striprtf
-beautifulsoup4
-lxml
-pandas
-openpyxl
-ebooklib
-chardet
+python-dotenv>=1.0
+openai>=1.30
 
-# OpenAI v1 SDK
-openai>=1.0.0
-
+PyPDF2>=3.0
+python-docx>=1.1
+python-pptx>=0.6
+beautifulsoup4>=4.12
+lxml>=5.2
+chardet>=5.2
+pandas>=2.2
+openpyxl>=3.1
