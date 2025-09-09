@@ -1,4 +1,4 @@
-# config/db.py
+# login_api/config/db.py
 
 import os
 from pymongo import MongoClient
@@ -12,5 +12,8 @@ DB_NAME = os.getenv("DB_NAME")
 client = MongoClient(MONGO_URI)
 db = client[DB_NAME]
 
-# This is the collection where we'll store user data
+# Existing collection
 user_collection = db["users"]
+
+# New collection for history
+history_collection = db["history"]

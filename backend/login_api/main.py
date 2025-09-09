@@ -1,25 +1,28 @@
+# backend/login_api/main.py
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routes.auth import auth_router
-from routes.summarizer import router as summarizer_router  # Import summarizer route
+
+# ✅ Use package-absolute imports (match your folder: backend/login_api/routes/*.py)
+from login_api.routes.auth import auth_router
+from login_api.routes.summarizer import router as summarizer_router
+from login_api.routes.history import router as history_router
 
 app = FastAPI()
 
-# ✅ Enable CORS for React or Next.js frontend (on localhost:3000)
+# ✅ Single CORS middleware (include both localhost & 127.0.0.1 for Next.js dev)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ✅ Include the login/signup routes
+# ✅ Mount routers
 app.include_router(auth_router, prefix="/auth")
-
-# ✅ Include the summarizer route
 app.include_router(summarizer_router, prefix="/api")
-
-@app.get("/")
-def read_root():
-    return {"message": "Study Buddy backend is running"}
+app.include_router(history_router)  # already has prefix="/api/history" inside the router

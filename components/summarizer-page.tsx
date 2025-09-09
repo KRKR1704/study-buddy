@@ -22,7 +22,60 @@ type QuizItem = { question: string; options: string[]; answerIndex: number; expl
 // Prefer env; fallback to local dev
 const API_BASE =
   (process.env.NEXT_PUBLIC_API_BASE?.replace(/\/+$/, "") || "http://127.0.0.1:8000").replace(/\/+$/, "")
+
 const API_URL = `${API_BASE}/api/summarize/`
+const HISTORY_URL = `${API_BASE}/api/history`
+
+// ---- Replace with your real auth. For now, try a known place (localStorage/token) and fall back. ----
+function getCurrentUserId(): string {
+  // If you store user in localStorage/session, read it here:
+  // e.g., const u = JSON.parse(localStorage.getItem("sb_user") || "{}"); return u?.id || u?._id || "dev-user";
+  const fromLS = (typeof window !== "undefined" && localStorage.getItem("sb_user_id")) || ""
+  return fromLS || "dev-user"
+}
+
+// Post a History record; non-fatal if it fails (we don't block the UX).
+async function saveToHistory(payload: {
+  user_id: string
+  file_name?: string
+  file_id?: string
+  content_text?: string
+  summary?: string
+  key_takeaways?: string[]
+  flashcards?: Flashcard[]
+  quiz?: {
+    title?: string
+    questions: { question: string; options?: string[]; answer?: string; explanation?: string }[]
+    score?: number
+    meta?: Record<string, any>
+  } | undefined
+}) {
+  try {
+    const res = await fetch(HISTORY_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        user_id: payload.user_id,
+        source: "summarizer",
+        file_name: payload.file_name,
+        file_id: payload.file_id, // GridFS/S3 key if your summarize endpoint returns it
+        content_text: payload.content_text,
+        summary: payload.summary,
+        key_takeaways: payload.key_takeaways || [],
+        flashcards: payload.flashcards || [],
+        quiz: payload.quiz,
+        tags: ["summary"],
+        meta: { page: "summarizer" },
+      }),
+    })
+    if (!res.ok) {
+      // Log but don't interrupt the user flow
+      console.warn("saveToHistory failed:", res.status, await res.text().catch(() => ""))
+    }
+  } catch (e) {
+    console.warn("saveToHistory error:", e)
+  }
+}
 
 export function SummarizerPage({ onBackToDashboard, onViewFlashcards, onViewQuiz }: SummarizerPageProps) {
   const [currentStep, setCurrentStep] = useState<SummarizerStep>("upload")
@@ -72,6 +125,15 @@ export function SummarizerPage({ onBackToDashboard, onViewFlashcards, onViewQuiz
     setReadingTime(`${minutes} min`)
   }
 
+  // Simple fallback bullet derivation (only used if backend didn't return keyTakeaways)
+  const deriveKeyPoints = (text: string): string[] => {
+    const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+    const bullets = lines.filter((l) => /^(\*|-|•|\d+[.)])\s+/.test(l))
+    if (bullets.length > 0) return bullets.map((b) => b.replace(/^(\*|-|•|\d+[.)])\s+/, ""))
+    const sentences = text.split(/(?<=[.!?])\s+/).filter(Boolean)
+    return sentences.slice(0, 7)
+  }
+
   // ---------- main action ----------
   const startProcessing = async () => {
     if (uploadedFiles.length === 0 || isSubmitting) return
@@ -118,9 +180,11 @@ export function SummarizerPage({ onBackToDashboard, onViewFlashcards, onViewQuiz
         throw new Error(json?.error || "Summarization failed on the server.")
       }
 
-      // expected: { success: true, data: { summary, keyTakeaways, flashcards, quiz } }
+      // expected: { success: true, data: { summary, keyTakeaways, flashcards, quiz, file_id?, extractedText? } }
       const data = json.data || {}
       const textSummary: string = data.summary || ""
+      const fileIdFromServer: string | undefined = data.file_id // if your API returns a storage id
+      const extractedText: string | undefined = data.extractedText // optional raw text
 
       setSummary(textSummary)
       computeWordStats(textSummary)
@@ -134,12 +198,52 @@ export function SummarizerPage({ onBackToDashboard, onViewFlashcards, onViewQuiz
       localStorage.setItem("sb_summary", textSummary)
       localStorage.setItem("sb_keypoints", JSON.stringify(kp))
 
+      let flashcards: Flashcard[] | undefined
       if (Array.isArray(data.flashcards)) {
-        localStorage.setItem("sb_flashcards", JSON.stringify(data.flashcards as Flashcard[]))
+        flashcards = data.flashcards as Flashcard[]
+        localStorage.setItem("sb_flashcards", JSON.stringify(flashcards))
       }
+
+      // Your backend might return quiz as array of items or an object. We keep your existing local type:
+      let quizItems: QuizItem[] | undefined
       if (Array.isArray(data.quiz)) {
-        localStorage.setItem("sb_quiz", JSON.stringify(data.quiz as QuizItem[]))
+        quizItems = data.quiz as QuizItem[]
+        localStorage.setItem("sb_quiz", JSON.stringify(quizItems))
       }
+
+      // -------------------- NEW: Save to History (non-blocking) --------------------
+      const userId = getCurrentUserId()
+
+      // Map your QuizItem[] (answerIndex) into the History API question shape (answer string optional)
+      const mappedQuiz =
+        Array.isArray(quizItems) && quizItems.length > 0
+          ? {
+              title: `${file.name.replace(/\.[^.]+$/, "")} — Quiz`,
+              questions: quizItems.map((q) => ({
+                question: q.question,
+                options: q.options,
+                answer:
+                  typeof q.answerIndex === "number" && q.options[q.answerIndex] != null
+                    ? q.options[q.answerIndex]
+                    : undefined,
+                explanation: q.explanation,
+              })),
+              meta: { generatedFrom: "summarizer" },
+            }
+          : undefined
+
+      // Fire and forget (we do not block UI on errors)
+      void saveToHistory({
+        user_id: userId,
+        file_name: file.name,
+        file_id: fileIdFromServer, // only works if summarize endpoint stored it; otherwise omit
+        content_text: extractedText,
+        summary: textSummary,
+        key_takeaways: kp,
+        flashcards,
+        quiz: mappedQuiz,
+      })
+      // ---------------------------------------------------------------------------
 
       await new Promise((r) => setTimeout(r, 600))
       setCurrentStep("results")
@@ -151,15 +255,6 @@ export function SummarizerPage({ onBackToDashboard, onViewFlashcards, onViewQuiz
       setIsSubmitting(false)
       timers.forEach((t) => window.clearTimeout(t))
     }
-  }
-
-  // Simple fallback bullet derivation (only used if backend didn't return keyTakeaways)
-  const deriveKeyPoints = (text: string): string[] => {
-    const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
-    const bullets = lines.filter((l) => /^(\*|-|•|\d+[.)])\s+/.test(l))
-    if (bullets.length > 0) return bullets.map((b) => b.replace(/^(\*|-|•|\d+[.)])\s+/, ""))
-    const sentences = text.split(/(?<=[.!?])\s+/).filter(Boolean)
-    return sentences.slice(0, 7)
   }
 
   const getStepStatus = (step: ProcessingStep) => {

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { History, FileText, Brain, HelpCircle, Trophy, Calendar, Search, Filter, Eye, RotateCcw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -9,6 +9,8 @@ import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Progress } from "@/components/ui/progress"
+
+// ================== Types (your existing UI types kept) ==================
 
 interface QuizAttempt {
   id: string
@@ -45,6 +47,100 @@ interface DocumentHistory {
   totalStudyTime?: number // in minutes
 }
 
+// ================== Backend History item shape ==================
+
+type Flashcard = { front: string; back: string }
+type QuizQuestion = { question: string; options?: string[]; answer?: string; explanation?: string }
+type QuizPayload = { title?: string; questions?: QuizQuestion[]; score?: number; meta?: Record<string, any> }
+
+interface HistoryItem {
+  _id: string
+  user_id: string
+  source: "summarizer" | "quiz"
+  file_name?: string
+  file_id?: string
+  content_text?: string
+  summary?: string
+  key_takeaways?: string[]
+  flashcards?: Flashcard[]
+  quiz?: QuizPayload
+  tags?: string[]
+  meta?: Record<string, any>
+  created_at: string
+  updated_at: string
+}
+
+// ================== Config & helpers ==================
+
+const API_BASE =
+  (process.env.NEXT_PUBLIC_API_BASE?.replace(/\/+$/, "") || "http://127.0.0.1:8000").replace(/\/+$/, "")
+
+async function fetchHistory(user_id: string, cursor?: string) {
+  const qs = new URLSearchParams({ user_id })
+  if (cursor) qs.set("cursor", cursor)
+  const res = await fetch(`${API_BASE}/api/history?${qs.toString()}`)
+  if (!res.ok) throw new Error(await res.text().catch(() => `Failed: ${res.status}`))
+  return (await res.json()) as { items: HistoryItem[]; next_cursor?: string | null }
+}
+
+// replace with your real auth retrieval
+function getCurrentUserId(): string {
+  const fromLS = (typeof window !== "undefined" && localStorage.getItem("sb_user_id")) || ""
+  return fromLS || "dev-user"
+}
+
+// Map backend HistoryItem -> your UI DocumentHistory
+function mapToDocumentHistory(item: HistoryItem): DocumentHistory {
+  const hasSummary = Boolean(item.summary && item.summary.trim().length > 0)
+  const hasFlash = Array.isArray(item.flashcards) && item.flashcards.length > 0
+  const hasQuiz = Boolean(item.quiz && Array.isArray(item.quiz.questions) && item.quiz.questions!.length > 0)
+
+  // We may not have type/size from backend; keep defaults compatible with UI
+  const typeGuess =
+    (item.file_name && item.file_name.toLowerCase().endsWith(".pdf") && "application/pdf") ||
+    (item.file_name && item.file_name.toLowerCase().endsWith(".pptx") &&
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation") ||
+    (item.file_name && item.file_name.toLowerCase().endsWith(".docx") &&
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document") ||
+    (item.file_name && item.file_name.toLowerCase().endsWith(".txt") && "text/plain") ||
+    "application/octet-stream"
+
+  const category: DocumentHistory["category"] =
+    typeGuess.includes("presentation")
+      ? "presentation"
+      : typeGuess.includes("spreadsheet") || typeGuess.includes("excel")
+        ? "spreadsheet"
+        : typeGuess.includes("image")
+          ? "image"
+          : typeGuess.includes("pdf") || typeGuess.includes("document") || typeGuess.includes("text")
+            ? "document"
+            : "other"
+
+  return {
+    id: item._id,
+    name: item.file_name || item.quiz?.title || (item.source === "quiz" ? "Quiz" : "Summary"),
+    type: typeGuess,
+    size: 0, // unknown from backend; safe default
+    uploadDate: item.created_at,
+    category,
+    status: "processed",
+    generatedContent: {
+      summaryGenerated: hasSummary,
+      summaryGeneratedAt: hasSummary ? item.updated_at : undefined,
+      flashcardsGenerated: hasFlash,
+      flashcardsGeneratedAt: hasFlash ? item.updated_at : undefined,
+      flashcardsCount: hasFlash ? item.flashcards!.length : undefined,
+      quizGenerated: hasQuiz,
+      quizGeneratedAt: hasQuiz ? item.updated_at : undefined,
+      quizAttempts: [], // attempts not tracked yet; keeping empty array keeps your UI logic intact
+    },
+    lastAccessed: item.updated_at,
+    totalStudyTime: undefined, // unknown; you can compute later if you track
+  }
+}
+
+// ================== Component ==================
+
 interface HistoryPageProps {
   onBackToDashboard: () => void
   onViewDocument: (docId: string) => void
@@ -65,168 +161,55 @@ export function HistoryPage({
   const [sortBy, setSortBy] = useState<string>("uploadDate")
   const [selectedDocument, setSelectedDocument] = useState<DocumentHistory | null>(null)
 
-  // Sample document history data
-  const [documentHistory] = useState<DocumentHistory[]>([
-    {
-      id: "1",
-      name: "Introduction to Machine Learning.pdf",
-      type: "application/pdf",
-      size: 2.4 * 1024 * 1024,
-      uploadDate: "2024-12-20T10:30:00Z",
-      category: "document",
-      status: "processed",
-      lastAccessed: "2024-12-23T15:45:00Z",
-      totalStudyTime: 180, // 3 hours
-      generatedContent: {
-        summaryGenerated: true,
-        summaryGeneratedAt: "2024-12-20T10:35:00Z",
-        flashcardsGenerated: true,
-        flashcardsGeneratedAt: "2024-12-20T10:40:00Z",
-        flashcardsCount: 8,
-        quizGenerated: true,
-        quizGeneratedAt: "2024-12-20T10:45:00Z",
-        quizAttempts: [
-          {
-            id: "q1",
-            attemptDate: "2024-12-20T11:00:00Z",
-            score: 85,
-            accuracy: 85,
-            totalQuestions: 10,
-            correctAnswers: 8,
-            timeSpent: 900, // 15 minutes
-            difficulty: "mixed",
-          },
-          {
-            id: "q2",
-            attemptDate: "2024-12-22T14:30:00Z",
-            score: 92,
-            accuracy: 92,
-            totalQuestions: 10,
-            correctAnswers: 9,
-            timeSpent: 720, // 12 minutes
-            difficulty: "mixed",
-          },
-          {
-            id: "q3",
-            attemptDate: "2024-12-23T09:15:00Z",
-            score: 78,
-            accuracy: 78,
-            totalQuestions: 10,
-            correctAnswers: 7,
-            timeSpent: 1080, // 18 minutes
-            difficulty: "mixed",
-          },
-        ],
-      },
-    },
-    {
-      id: "2",
-      name: "Data Structures and Algorithms.docx",
-      type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      size: 1.8 * 1024 * 1024,
-      uploadDate: "2024-12-18T14:15:00Z",
-      category: "document",
-      status: "processed",
-      lastAccessed: "2024-12-21T10:20:00Z",
-      totalStudyTime: 240, // 4 hours
-      generatedContent: {
-        summaryGenerated: true,
-        summaryGeneratedAt: "2024-12-18T14:20:00Z",
-        flashcardsGenerated: true,
-        flashcardsGeneratedAt: "2024-12-18T14:25:00Z",
-        flashcardsCount: 12,
-        quizGenerated: true,
-        quizGeneratedAt: "2024-12-18T14:30:00Z",
-        quizAttempts: [
-          {
-            id: "q4",
-            attemptDate: "2024-12-19T16:45:00Z",
-            score: 70,
-            accuracy: 70,
-            totalQuestions: 15,
-            correctAnswers: 10,
-            timeSpent: 1200, // 20 minutes
-            difficulty: "mixed",
-          },
-          {
-            id: "q5",
-            attemptDate: "2024-12-21T10:30:00Z",
-            score: 88,
-            accuracy: 88,
-            totalQuestions: 15,
-            correctAnswers: 13,
-            timeSpent: 1050, // 17.5 minutes
-            difficulty: "mixed",
-          },
-        ],
-      },
-    },
-    {
-      id: "3",
-      name: "Statistics Presentation.pptx",
-      type: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-      size: 5.2 * 1024 * 1024,
-      uploadDate: "2024-12-15T09:45:00Z",
-      category: "presentation",
-      status: "processed",
-      lastAccessed: "2024-12-20T13:10:00Z",
-      totalStudyTime: 90, // 1.5 hours
-      generatedContent: {
-        summaryGenerated: true,
-        summaryGeneratedAt: "2024-12-15T09:50:00Z",
-        flashcardsGenerated: false,
-        quizGenerated: true,
-        quizGeneratedAt: "2024-12-15T09:55:00Z",
-        quizAttempts: [
-          {
-            id: "q6",
-            attemptDate: "2024-12-16T11:20:00Z",
-            score: 95,
-            accuracy: 95,
-            totalQuestions: 12,
-            correctAnswers: 11,
-            timeSpent: 840, // 14 minutes
-            difficulty: "mixed",
-          },
-        ],
-      },
-    },
-    {
-      id: "4",
-      name: "Chemistry Notes.txt",
-      type: "text/plain",
-      size: 0.5 * 1024 * 1024,
-      uploadDate: "2024-12-12T16:20:00Z",
-      category: "document",
-      status: "processed",
-      lastAccessed: "2024-12-18T08:30:00Z",
-      totalStudyTime: 120, // 2 hours
-      generatedContent: {
-        summaryGenerated: true,
-        summaryGeneratedAt: "2024-12-12T16:25:00Z",
-        flashcardsGenerated: true,
-        flashcardsGeneratedAt: "2024-12-12T16:30:00Z",
-        flashcardsCount: 6,
-        quizGenerated: false,
-        quizAttempts: [],
-      },
-    },
-    {
-      id: "5",
-      name: "Physics Formulas.pdf",
-      type: "application/pdf",
-      size: 1.2 * 1024 * 1024,
-      uploadDate: "2024-12-10T11:10:00Z",
-      category: "document",
-      status: "failed",
-      generatedContent: {
-        summaryGenerated: false,
-        flashcardsGenerated: false,
-        quizGenerated: false,
-        quizAttempts: [],
-      },
-    },
-  ])
+  // NEW: state for real data
+  const [documentHistory, setDocumentHistory] = useState<DocumentHistory[]>([])
+  const [loading, setLoading] = useState<boolean>(true)
+  const [error, setError] = useState<string | null>(null)
+  const [nextCursor, setNextCursor] = useState<string | null | undefined>(null)
+
+  // Load data from backend history
+  useEffect(() => {
+    const userId = getCurrentUserId()
+    let cancelled = false
+
+    async function load() {
+      setLoading(true)
+      setError(null)
+      try {
+        const { items, next_cursor } = await fetchHistory(userId)
+        if (cancelled) return
+        const mapped = items.map(mapToDocumentHistory)
+        setDocumentHistory(mapped)
+        setNextCursor(next_cursor)
+      } catch (e: any) {
+        if (!cancelled) setError(e?.message || "Failed to load history.")
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+
+    load()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // Optional: handler to load more (infinite scroll could call this)
+  async function loadMore() {
+    if (!nextCursor) return
+    try {
+      const userId = getCurrentUserId()
+      const { items, next_cursor } = await fetchHistory(userId, nextCursor)
+      const mapped = items.map(mapToDocumentHistory)
+      setDocumentHistory((prev) => [...prev, ...mapped])
+      setNextCursor(next_cursor)
+    } catch (e) {
+      // non-fatal
+      console.warn("loadMore failed", e)
+    }
+  }
+
+  // ================== Your original helpers (unchanged) ==================
 
   const formatFileSize = (bytes: number) => {
     if (bytes === 0) return "0 Bytes"
@@ -317,30 +300,37 @@ export function HistoryPage({
     return "stable"
   }
 
-  const filteredDocuments = documentHistory
-    .filter((doc) => {
-      const matchesSearch = doc.name.toLowerCase().includes(searchTerm.toLowerCase())
-      const matchesFilter = filterCategory === "all" || doc.category === filterCategory
-      return matchesSearch && matchesFilter
-    })
-    .sort((a, b) => {
-      switch (sortBy) {
-        case "name":
-          return a.name.localeCompare(b.name)
-        case "size":
-          return b.size - a.size
-        case "lastAccessed":
-          return new Date(b.lastAccessed || 0).getTime() - new Date(a.lastAccessed || 0).getTime()
-        case "uploadDate":
-        default:
-          return new Date(b.uploadDate).getTime() - new Date(a.uploadDate).getTime()
-      }
-    })
+  // ================== Derived / memoized ==================
+
+  const filteredDocuments = useMemo(() => {
+    const base = documentHistory
+      .filter((doc) => {
+        const matchesSearch = doc.name.toLowerCase().includes(searchTerm.toLowerCase())
+        const matchesFilter = filterCategory === "all" || doc.category === filterCategory
+        return matchesSearch && matchesFilter
+      })
+      .sort((a, b) => {
+        switch (sortBy) {
+          case "name":
+            return a.name.localeCompare(b.name)
+          case "size":
+            return b.size - a.size
+          case "lastAccessed":
+            return new Date(b.lastAccessed || 0).getTime() - new Date(a.lastAccessed || 0).getTime()
+          case "uploadDate":
+          default:
+            return new Date(b.uploadDate).getTime() - new Date(a.uploadDate).getTime()
+        }
+      })
+    return base
+  }, [documentHistory, searchTerm, filterCategory, sortBy])
 
   const totalDocuments = documentHistory.length
   const processedDocuments = documentHistory.filter((doc) => doc.status === "processed").length
   const totalQuizAttempts = documentHistory.reduce((sum, doc) => sum + doc.generatedContent.quizAttempts.length, 0)
   const totalStudyTime = documentHistory.reduce((sum, doc) => sum + (doc.totalStudyTime || 0), 0)
+
+  // ================== UI ==================
 
   return (
     <div className="flex-1 p-6 bg-gray-50">
@@ -356,10 +346,29 @@ export function HistoryPage({
               Track your learning progress and review past study materials • {totalDocuments} documents uploaded
             </p>
           </div>
-          <Button variant="outline" onClick={onBackToDashboard}>
-            Back to Dashboard
-          </Button>
+          <div className="flex gap-2">
+            {nextCursor && (
+              <Button variant="outline" onClick={loadMore}>
+                Load more
+              </Button>
+            )}
+            <Button variant="outline" onClick={onBackToDashboard}>
+              Back to Dashboard
+            </Button>
+          </div>
         </div>
+
+        {/* Loading / Error states */}
+        {loading && (
+          <Card className="mb-6">
+            <CardContent className="p-6 text-center text-gray-600">Loading your history…</CardContent>
+          </Card>
+        )}
+        {error && (
+          <Card className="mb-6">
+            <CardContent className="p-6 text-center text-red-600">Failed to load history: {error}</CardContent>
+          </Card>
+        )}
 
         {/* Stats Overview */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
@@ -440,7 +449,7 @@ export function HistoryPage({
 
         {/* Documents List */}
         <div className="space-y-4">
-          {filteredDocuments.length > 0 ? (
+          {!loading && !error && filteredDocuments.length > 0 ? (
             filteredDocuments.map((doc) => (
               <Card key={doc.id} className="hover:shadow-md transition-shadow">
                 <CardContent className="p-6">
@@ -862,18 +871,20 @@ export function HistoryPage({
               </Card>
             ))
           ) : (
-            <Card>
-              <CardContent className="p-12 text-center">
-                <History className="h-16 w-16 mx-auto mb-4 text-gray-400" />
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">No documents found</h3>
-                <p className="text-gray-600 mb-4">
-                  {searchTerm || filterCategory !== "all"
-                    ? "Try adjusting your search or filter criteria"
-                    : "Upload your first document to start building your study history"}
-                </p>
-                <Button onClick={onBackToDashboard}>Go to Dashboard</Button>
-              </CardContent>
-            </Card>
+            !loading && !error && (
+              <Card>
+                <CardContent className="p-12 text-center">
+                  <History className="h-16 w-16 mx-auto mb-4 text-gray-400" />
+                  <h3 className="text-lg font-semibold text-gray-900 mb-2">No documents found</h3>
+                  <p className="text-gray-600 mb-4">
+                    {searchTerm || filterCategory !== "all"
+                      ? "Try adjusting your search or filter criteria"
+                      : "Upload your first document to start building your study history"}
+                  </p>
+                  <Button onClick={onBackToDashboard}>Go to Dashboard</Button>
+                </CardContent>
+              </Card>
+            )
           )}
         </div>
       </div>
