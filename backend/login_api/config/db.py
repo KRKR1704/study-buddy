@@ -1,19 +1,21 @@
-# login_api/config/db.py
-
+# backend/login_api/db.py
 import os
+from motor.motor_asyncio import AsyncIOMotorClient
+from gridfs import GridFS
 from pymongo import MongoClient
-from dotenv import load_dotenv
 
-load_dotenv()
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+DB_NAME   = os.getenv("MONGO_DB", "study_buddy")
 
-MONGO_URI = os.getenv("MONGO_URI")
-DB_NAME = os.getenv("DB_NAME")
+# Motor for async ops
+motor_client = AsyncIOMotorClient(MONGO_URI)
+db = motor_client[DB_NAME]
 
-client = MongoClient(MONGO_URI)
-db = client[DB_NAME]
+# GridFS requires a sync client handle for file-like streaming
+_sync_client = MongoClient(MONGO_URI)
+_sync_db = _sync_client[DB_NAME]
+fs = GridFS(_sync_db)
 
-# Existing collection
-user_collection = db["users"]
-
-# New collection for history
-history_collection = db["history"]
+# Synchronous collections for parts of the code that use pymongo sync API
+user_collection = _sync_db["users"]
+history_collection = _sync_db["history"]

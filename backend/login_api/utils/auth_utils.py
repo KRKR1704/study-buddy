@@ -31,3 +31,11 @@ def decode_access_token(token: str):
         return payload
     except JWTError:
         return None
+
+
+def get_user_id_from_token(token: str):
+    payload = decode_access_token(token)
+    if not payload:
+        return None
+    # token may store user_id directly
+    return payload.get("user_id") or payload.get("sub")

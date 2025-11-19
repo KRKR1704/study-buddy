@@ -1,88 +1,184 @@
-# backend/routes/history.py  (sync / PyMongo version)
-
-from fastapi import APIRouter, HTTPException, Query
-from typing import Optional
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi import APIRouter, HTTPException, UploadFile, File, Query, Response, Request
+from typing import List, Optional
+from datetime import datetime
+import asyncio
 from bson import ObjectId
-from gridfs import GridFS
 
-# Import your db handle and repo functions
-from login_api.config.db import db  # <-- this is your PyMongo db from config/db.py
-from login_api.repositories.history_repo import (
-    create_history,
-    get_history,
-    get_history_item,
-)
-from login_api.models.history_model import HistoryItem  # response model
-# If you also created a separate "HistoryItemCreate" pydantic model, import it here
-# from login_api.models.history_model import HistoryItemCreate
+from config.db import db, fs
+from models.history_model import HistoryCreate, HistoryOut
+from utils.auth_utils import get_user_id_from_token
 
-router = APIRouter(prefix="/api/history", tags=["history"])
+router = APIRouter(prefix="/history", tags=["History"])
 
-@router.post("", response_model=HistoryItem)
-def add_history(item: dict):  # or: (item: HistoryItemCreate) if you defined it
-    """
-    Create a history record. Keep it sync to match PyMongo.
-    """
-    # If you have auth, derive user_id from token and ignore any user_id in body.
-    return create_history(item)
+def _to_str_id(doc):
+    doc["_id"] = str(doc["_id"])
+    return doc
 
-@router.get("", response_model=dict)
-def list_history(
-    user_id: str,
-    source: Optional[str] = Query(default=None),
-    limit: int = 20,
-    cursor: Optional[str] = None,
-):
-    """
-    List history for a user with simple keyset pagination.
-    """
-    res = get_history(user_id=user_id, source=source, limit=limit, cursor=cursor)
-    return {
-        "items": [i.model_dump(by_alias=True) for i in res["items"]],
-        "next_cursor": res["next_cursor"],
+@router.post("", response_model=HistoryOut)
+async def create_history(payload: HistoryCreate, request: Request):
+    # ensure the caller is the owner; prefer Authorization header but accept token query param
+    token = None
+    auth = request.headers.get("authorization")
+    if auth and auth.lower().startswith("bearer "):
+        token = auth.split(None, 1)[1]
+    elif "token" in request.query_params:
+        token = request.query_params.get("token")
+    user_id = get_user_id_from_token(token) if token else None
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    doc = payload.model_dump(by_alias=True, exclude_none=True)
+    # override any provided user_id with the token-derived one
+    doc["user_id"] = user_id
+    # Sanitize stored fields based on the declared kind to avoid accidental
+    # mixing of summary/flashcards/quiz when clients send extra data.
+    kind = doc.get("kind")
+    if kind == "quiz":
+        doc.pop("summary", None)
+        doc.pop("key_takeaways", None)
+        doc.pop("flashcards", None)
+    elif kind == "upload":
+        # uploads are file-only records; don't store summary/quiz unless explicit
+        doc.pop("summary", None)
+        doc.pop("key_takeaways", None)
+        doc.pop("flashcards", None)
+        doc.pop("quiz", None)
+
+    doc["created_at"] = datetime.utcnow()
+    res = await db.history.insert_one(doc)
+    saved = await db.history.find_one({"_id": res.inserted_id})
+    return _to_str_id(saved)
+
+@router.post("/upload", response_model=HistoryOut)
+async def upload_history_file(request: Request, kind: str = Query("upload"), title: str = Query("Uploaded file"), file: UploadFile = File(...)):
+    # determine caller from Authorization header or token query param
+    token = None
+    auth = request.headers.get("authorization")
+    if auth and auth.lower().startswith("bearer "):
+        token = auth.split(None, 1)[1]
+    elif "token" in request.query_params:
+        token = request.query_params.get("token")
+    user_id = get_user_id_from_token(token) if token else None
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    data = await file.read()
+    # GridFS is blocking (sync). Run in a thread to avoid blocking the event loop.
+    grid_id = await asyncio.to_thread(lambda: fs.put(data, filename=file.filename, content_type=file.content_type))
+    doc = {
+        "user_id": user_id,
+        "kind": kind,
+        "title": title,
+        "source_filename": file.filename,
+        "source_file_id": str(grid_id),
+        "created_at": datetime.utcnow(),
     }
+    res = await db.history.insert_one(doc)
+    saved = await db.history.find_one({"_id": res.inserted_id})
+    return _to_str_id(saved)
 
-@router.get("/{item_id}", response_model=HistoryItem)
-def get_item(item_id: str):
-    """
-    Fetch a single history item.
-    """
-    item = get_history_item(item_id)
-    if not item:
-        raise HTTPException(404, "Not found")
-    return item
+@router.get("", response_model=List[HistoryOut])
+async def list_history(request: Request, kind: Optional[str] = None, skip: int = 0, limit: int = 50):
+    token = None
+    auth = request.headers.get("authorization")
+    if auth and auth.lower().startswith("bearer "):
+        token = auth.split(None, 1)[1]
+    elif "token" in request.query_params:
+        token = request.query_params.get("token")
+    user_id = get_user_id_from_token(token) if token else None
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    q = {"user_id": user_id}
+    if kind:
+        q["kind"] = kind
+    cursor = db.history.find(q).sort("created_at", -1).skip(skip).limit(min(limit, 100))
+    return [_to_str_id(doc) async for doc in cursor]
 
-@router.get("/{item_id}/download")
-def download_original_file(item_id: str):
-    """
-    Streams the original uploaded file if file_id exists from GridFS.
-
-    If you're using S3/GCS instead of GridFS, replace this section to
-    generate a pre-signed URL and RedirectResponse.
-    """
-    item = get_history_item(item_id)
-    if not item or not item.file_id:
-        raise HTTPException(404, "File not found for this history item")
-
-    # GridFS (sync) example
+@router.get("/{history_id}", response_model=HistoryOut)
+async def get_history(history_id: str, request: Request):
     try:
-        fs = GridFS(db)  # uses the same db from config/db.py
-        grid_out = fs.get(ObjectId(item.file_id))
+        oid = ObjectId(history_id)
     except Exception:
-        return JSONResponse({"error": "File not available in storage."}, status_code=404)
+        raise HTTPException(status_code=400, detail="Invalid history id")
+    token = None
+    auth = request.headers.get("authorization")
+    if auth and auth.lower().startswith("bearer "):
+        token = auth.split(None, 1)[1]
+    elif "token" in request.query_params:
+        token = request.query_params.get("token")
+    user_id = get_user_id_from_token(token) if token else None
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    query = {"_id": oid, "user_id": user_id}
+    doc = await db.history.find_one(query)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Not found")
+    return _to_str_id(doc)
 
-    filename = item.file_name or "file"
+@router.get("/{history_id}/download/{file_id}")
+async def download_file(history_id: str, file_id: str, request: Request):
+    # authorize
+    try:
+        oid = ObjectId(history_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid history id")
+    token = None
+    auth = request.headers.get("authorization")
+    if auth and auth.lower().startswith("bearer "):
+        token = auth.split(None, 1)[1]
+    elif "token" in request.query_params:
+        token = request.query_params.get("token")
+    user_id = get_user_id_from_token(token) if token else None
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    query = {"_id": oid, "user_id": user_id}
+    doc = await db.history.find_one(query)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Not found")
 
-    def iter_chunks(chunk_size: int = 1024 * 1024):
-        while True:
-            chunk = grid_out.read(chunk_size)
-            if not chunk:
-                break
-            yield chunk
+    # fetch from GridFS
+    try:
+        # fetch the GridFS object in a thread
+        def _fetch():
+            g = fs.get(ObjectId(file_id))
+            return (g.read(), getattr(g, "content_type", None), getattr(g, "filename", None))
 
-    return StreamingResponse(
-        iter_chunks(),
-        media_type="application/octet-stream",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        content, content_type, filename = await asyncio.to_thread(_fetch)
+    except Exception:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    return Response(
+        content=content,
+        media_type=content_type or "application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{filename or "download"}"'}
     )
+
+@router.post("/{history_id}/attach")
+async def attach_file(history_id: str, request: Request, file: UploadFile = File(...)):
+    try:
+        oid = ObjectId(history_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid history id")
+
+    token = None
+    auth = request.headers.get("authorization")
+    if auth and auth.lower().startswith("bearer "):
+        token = auth.split(None, 1)[1]
+    elif "token" in request.query_params:
+        token = request.query_params.get("token")
+    user_id = get_user_id_from_token(token) if token else None
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    doc = await db.history.find_one({"_id": oid, "user_id": user_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    data = await file.read()
+    grid_id = await asyncio.to_thread(lambda: fs.put(data, filename=file.filename, content_type=file.content_type))
+
+    await db.history.update_one(
+        {"_id": oid},
+        {"$push": {"derived_file_ids": str(grid_id)}}
+    )
+    return {"ok": True, "file_id": str(grid_id)}
