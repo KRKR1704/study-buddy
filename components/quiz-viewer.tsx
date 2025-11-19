@@ -1,6 +1,7 @@
 "use client"
 
 import { useMemo, useEffect, useState } from "react"
+import { getItem } from "@/lib/userLocalStorage"
 import { CheckCircle, XCircle, ArrowRight, RotateCcw, Trophy, Clock, Target } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -178,7 +179,12 @@ export function QuizViewer({ onComplete, entryPoint }: QuizViewerProps) {
   const questions = useMemo<QuizQuestionUI[]>(() => {
     if (typeof window !== "undefined") {
       try {
-        const raw = localStorage.getItem("sb_quiz")
+        let raw: string | null = null
+        try {
+          raw = getItem("sb_quiz")
+        } catch {
+          raw = localStorage.getItem("sb_quiz")
+        }
         if (raw) {
           const parsed = JSON.parse(raw)
           const norm = normalizeQuiz(parsed)

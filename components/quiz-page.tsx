@@ -3,6 +3,7 @@
 import type React from "react"
 import { useState } from "react"
 import { Upload, FileText, ArrowRight, CheckCircle, Loader2, Brain, Play } from "lucide-react"
+import { setItem, removeItem } from "@/lib/userLocalStorage"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
@@ -20,7 +21,54 @@ type QuizItem =
   | { question: string; options: string[]; answerIndex: number; explanation?: string; category?: string }
   | any // be flexible with shapes from backend
 
-const API_URL = "http://127.0.0.1:8000/api/summarize/"
+// Prefer env; fallback to local dev
+const API_BASE =
+  (process.env.NEXT_PUBLIC_API_BASE?.replace(/\/+$/, "") || "http://127.0.0.1:8000").replace(/\/+$/, "")
+const API_URL = `${API_BASE}/api/summarize/`
+const HISTORY_URL = `${API_BASE}/api/history`
+
+// ---- Replace with your real auth. For now, read a fallback from localStorage. ----
+function getCurrentUserId(): string {
+  const fromLS = (typeof window !== "undefined" && localStorage.getItem("sb_user_id")) || ""
+  return fromLS || "dev-user"
+}
+
+// Save Quiz to History (non-blocking)
+async function saveQuizToHistory(payload: {
+  user_id: string
+  file_name?: string
+  file_id?: string
+  flashcards?: Flashcard[]
+  quiz: {
+    title?: string
+    questions: { question: string; options?: string[]; answer?: string; explanation?: string }[]
+    score?: number
+    meta?: Record<string, any>
+  }
+}) {
+  try {
+    const body: any = {
+      user_id: payload.user_id,
+      kind: "quiz",
+      title: payload.file_name || payload.quiz?.title || "Quiz",
+      source_filename: payload.file_name,
+      source_file_id: payload.file_id,
+      flashcards: payload.flashcards || [],
+      quiz: payload.quiz,
+      meta: { page: "quiz" },
+    }
+    const res = await fetch(HISTORY_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(typeof window !== "undefined" && localStorage.getItem("token") ? { Authorization: `Bearer ${localStorage.getItem("token")}` } : {}) },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) {
+      console.warn("saveQuizToHistory failed:", res.status, await res.text().catch(() => ""))
+    }
+  } catch (e) {
+    console.warn("saveQuizToHistory error:", e)
+  }
+}
 
 export function QuizPage({ onBackToDashboard, onStartQuiz }: QuizPageProps) {
   const [currentStep, setCurrentStep] = useState<QuizStep>("upload")
@@ -78,15 +126,16 @@ export function QuizPage({ onBackToDashboard, onStartQuiz }: QuizPageProps) {
   async function startProcessing() {
     if (uploadedFiles.length === 0 || isSubmitting) return
 
-    // Clear previous quiz/flashcards so we never show stale data
-    localStorage.removeItem("sb_quiz")
-    localStorage.removeItem("sb_flashcards")
+    // Clear previous quiz/flashcards so we never show stale data (per-user)
+    removeItem("sb_quiz")
+    removeItem("sb_flashcards")
 
     // File type guard (match your backend support)
     const allowed = [
       ".pdf", ".docx", ".pptx", ".txt", ".rtf", ".md", ".markdown", ".html", ".htm", ".csv", ".xlsx", ".epub"
     ]
-    const name = uploadedFiles[0].name
+    const file = uploadedFiles[0]
+    const name = file.name
     const ext = `.${(name.split(".").pop() || "").toLowerCase()}`
     if (!allowed.includes(ext)) {
       alert("Unsupported file type. Please upload a text document (PDF/DOCX/PPTX/TXT/RTF/MD/HTML/CSV/XLSX/EPUB).")
@@ -103,36 +152,81 @@ export function QuizPage({ onBackToDashboard, onStartQuiz }: QuizPageProps) {
     timers.push(window.setTimeout(() => setProcessingStep(3), 2000))
 
     try {
-      const file = uploadedFiles[0]
       setTitle(file.name.replace(/\.[^.]+$/, "") || "Quiz")
 
       const form = new FormData()
       form.append("file", file)
 
       const res = await fetch(API_URL, { method: "POST", body: form })
-      const json = await res.json()
-
-      if (!json?.success) {
-        alert(json?.error || "Quiz generation failed on the server.")
-        setCurrentStep("upload")
-        return
+      if (!res.ok) {
+        const errText = await res.text().catch(() => "")
+        throw new Error(errText || `Request failed with status ${res.status}`)
       }
 
-      // expected: { success: true, data: { summary, flashcards, quiz } }
+      const ct = res.headers.get("content-type") || ""
+      if (!ct.includes("application/json")) {
+        const txt = await res.text().catch(() => "")
+        throw new Error(`Expected JSON but received: ${txt}`)
+      }
+
+      const json = await res.json()
+      if (!json?.success) {
+        throw new Error(json?.error || "Quiz generation failed on the server.")
+      }
+
+      // expected: { success: true, data: { summary?, flashcards?, quiz, file_id? } }
       const data = json.data || {}
       const cards = Array.isArray(data.flashcards) ? (data.flashcards as Flashcard[]) : []
       const quiz = Array.isArray(data.quiz) ? (data.quiz as QuizItem[]) : []
+      const fileIdFromServer: string | undefined = data.file_id
 
-      // Save fresh results for the QuizViewer to read
-      localStorage.setItem("sb_flashcards", JSON.stringify(cards))
-      localStorage.setItem("sb_quiz", JSON.stringify(quiz))
+      // Save fresh results for your QuizViewer
+      setItem("sb_flashcards", JSON.stringify(cards))
+      setItem("sb_quiz", JSON.stringify(quiz))
+
+      // -------------------- NEW: Save to History (non-blocking) --------------------
+      const userId = getCurrentUserId()
+
+      // Map QuizItem[] (answerIndex) into History-friendly question objects (answer string optional)
+      const mappedQuizQuestions = quiz.map((q: any) => {
+        const options: string[] | undefined = Array.isArray(q.options) ? q.options : undefined
+        let answer: string | undefined
+        if (typeof q.answerIndex === "number" && options && options[q.answerIndex] != null) {
+          answer = options[q.answerIndex]
+        } else if (typeof q.answer === "string") {
+          // If backend already provides answer as string, keep it
+          answer = q.answer
+        }
+        return {
+          question: q.question ?? "",
+          options,
+          answer,
+          explanation: q.explanation,
+        }
+      })
+
+      // Save quiz to history but DO NOT save the flashcards or summary here —
+      // the Quiz flow should only persist the quiz object. Flashcards remain
+      // in localStorage for the UI but are not stored in the history record
+      // to avoid duplicate summary/flashcard entries.
+      void saveQuizToHistory({
+        user_id: userId,
+        file_name: file.name,
+        file_id: fileIdFromServer,
+        quiz: {
+          title: `${file.name.replace(/\.[^.]+$/, "")} — Quiz`,
+          questions: mappedQuizQuestions,
+          meta: { generatedFrom: "quiz-page" },
+        },
+      })
+      // ---------------------------------------------------------------------------
 
       // small delay so users see step 3
       await new Promise((r) => setTimeout(r, 500))
       setCurrentStep("ready")
-    } catch (err) {
+    } catch (err: any) {
       console.error(err)
-      alert("Something went wrong while generating the quiz. Please try again.")
+      alert(err?.message || "Something went wrong while generating the quiz. Please try again.")
       setCurrentStep("upload")
     } finally {
       setIsSubmitting(false)
@@ -296,7 +390,9 @@ export function QuizPage({ onBackToDashboard, onStartQuiz }: QuizPageProps) {
     <div className="max-w-4xl mx-auto text-center">
       <div className="mb-8">
         <h2 className="text-3xl font-bold text-gray-900 mb-2">Quiz Ready!</h2>
-        <p className="text-gray-600">Your interactive quiz has been generated from: <span className="font-semibold">{title}</span></p>
+        <p className="text-gray-600">
+          Your interactive quiz has been generated from: <span className="font-semibold">{title}</span>
+        </p>
       </div>
 
       {/* Simple stats (optional static) */}
