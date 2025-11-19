@@ -3,6 +3,7 @@
 import type React from "react"
 import { useState } from "react"
 import { Upload, FileText, ArrowRight, CheckCircle, Loader2, Brain, Play } from "lucide-react"
+import { setItem, removeItem } from "@/lib/userLocalStorage"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
@@ -46,19 +47,20 @@ async function saveQuizToHistory(payload: {
   }
 }) {
   try {
+    const body: any = {
+      user_id: payload.user_id,
+      kind: "quiz",
+      title: payload.file_name || payload.quiz?.title || "Quiz",
+      source_filename: payload.file_name,
+      source_file_id: payload.file_id,
+      flashcards: payload.flashcards || [],
+      quiz: payload.quiz,
+      meta: { page: "quiz" },
+    }
     const res = await fetch(HISTORY_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        user_id: payload.user_id,
-        source: "quiz",
-        file_name: payload.file_name,
-        file_id: payload.file_id, // GridFS/S3 key if your summarize API returns it
-        flashcards: payload.flashcards || [],
-        quiz: payload.quiz,
-        tags: ["quiz"],
-        meta: { page: "quiz" },
-      }),
+      headers: { "Content-Type": "application/json", ...(typeof window !== "undefined" && localStorage.getItem("token") ? { Authorization: `Bearer ${localStorage.getItem("token")}` } : {}) },
+      body: JSON.stringify(body),
     })
     if (!res.ok) {
       console.warn("saveQuizToHistory failed:", res.status, await res.text().catch(() => ""))
@@ -124,9 +126,9 @@ export function QuizPage({ onBackToDashboard, onStartQuiz }: QuizPageProps) {
   async function startProcessing() {
     if (uploadedFiles.length === 0 || isSubmitting) return
 
-    // Clear previous quiz/flashcards so we never show stale data
-    localStorage.removeItem("sb_quiz")
-    localStorage.removeItem("sb_flashcards")
+    // Clear previous quiz/flashcards so we never show stale data (per-user)
+    removeItem("sb_quiz")
+    removeItem("sb_flashcards")
 
     // File type guard (match your backend support)
     const allowed = [
@@ -161,6 +163,12 @@ export function QuizPage({ onBackToDashboard, onStartQuiz }: QuizPageProps) {
         throw new Error(errText || `Request failed with status ${res.status}`)
       }
 
+      const ct = res.headers.get("content-type") || ""
+      if (!ct.includes("application/json")) {
+        const txt = await res.text().catch(() => "")
+        throw new Error(`Expected JSON but received: ${txt}`)
+      }
+
       const json = await res.json()
       if (!json?.success) {
         throw new Error(json?.error || "Quiz generation failed on the server.")
@@ -173,8 +181,8 @@ export function QuizPage({ onBackToDashboard, onStartQuiz }: QuizPageProps) {
       const fileIdFromServer: string | undefined = data.file_id
 
       // Save fresh results for your QuizViewer
-      localStorage.setItem("sb_flashcards", JSON.stringify(cards))
-      localStorage.setItem("sb_quiz", JSON.stringify(quiz))
+      setItem("sb_flashcards", JSON.stringify(cards))
+      setItem("sb_quiz", JSON.stringify(quiz))
 
       // -------------------- NEW: Save to History (non-blocking) --------------------
       const userId = getCurrentUserId()
@@ -197,11 +205,14 @@ export function QuizPage({ onBackToDashboard, onStartQuiz }: QuizPageProps) {
         }
       })
 
+      // Save quiz to history but DO NOT save the flashcards or summary here —
+      // the Quiz flow should only persist the quiz object. Flashcards remain
+      // in localStorage for the UI but are not stored in the history record
+      // to avoid duplicate summary/flashcard entries.
       void saveQuizToHistory({
         user_id: userId,
         file_name: file.name,
-        file_id: fileIdFromServer, // only works if summarize endpoint stored it; otherwise omit
-        flashcards: cards,         // optional: store alongside quiz
+        file_id: fileIdFromServer,
         quiz: {
           title: `${file.name.replace(/\.[^.]+$/, "")} — Quiz`,
           questions: mappedQuizQuestions,

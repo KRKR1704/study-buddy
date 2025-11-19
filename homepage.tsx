@@ -14,12 +14,14 @@ import { FlashcardViewer } from "./components/flashcard-viewer"
 import { UploadsPage } from "./components/uploads-page"
 import { PomodoroPage } from "./components/pomodoro-page"
 import { TaskProvider } from "./contexts/task-context"
+import { getHistory, historyDownloadUrl } from "./lib/historyClient"
+import { setItem, clearAllForUser } from "@/lib/userLocalStorage"
 import { ThemeProvider } from "./contexts/theme-context"
 import { SidebarInset } from "@/components/ui/sidebar"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { QuizPage } from "./components/quiz-page"
 import { QuizViewer } from "./components/quiz-viewer"
-import { HistoryPage } from "./components/history-page"
+import HistoryPage from "./components/history-page"
 import { PerformancePage } from "./components/performance-page"
 
 type CurrentPage =
@@ -43,6 +45,7 @@ export default function Homepage() {
   const [addTaskModalOpen, setAddTaskModalOpen] = useState(false)
   const [currentPage, setCurrentPage] = useState<CurrentPage>("dashboard")
   const [quizEntryPoint, setQuizEntryPoint] = useState<"summary" | "flashcards" | "quiz-section">("quiz-section")
+  const [summarizerAutoLoad, setSummarizerAutoLoad] = useState<boolean>(false)
 
   // Show authentication pages if not logged in
   if (!isAuthenticated) {
@@ -63,6 +66,7 @@ export default function Homepage() {
               setQuizEntryPoint("summary")
               setCurrentPage("quiz-viewer")
             }}
+            autoLoad={summarizerAutoLoad}
           />
         )
       case "flashcards":
@@ -122,18 +126,108 @@ export default function Homepage() {
         return (
           <HistoryPage
             onBackToDashboard={() => setCurrentPage("dashboard")}
-            onViewDocument={(docId) => {
-              console.log("View document:", docId)
+            onViewDocument={async (docId) => {
+              try {
+                // fetch the history item to determine the attached file id
+                const item = await getHistory(docId)
+                const fileId = (item as any).source_file_id || (item as any).file_id || ((item as any).derived_file_ids && (item as any).derived_file_ids[0])
+                if (fileId) {
+                  const url = historyDownloadUrl(docId, fileId)
+                  window.open(url, "_blank")
+                } else {
+                  // If there's no downloadable file, fall back to opening the summary view
+                  if ((item as any).summary) {
+                    setItem('sb_summary', (item as any).summary)
+                    if (Array.isArray((item as any).key_takeaways)) setItem('sb_keypoints', JSON.stringify((item as any).key_takeaways))
+                    if (Array.isArray((item as any).flashcards)) setItem('sb_flashcards', JSON.stringify((item as any).flashcards))
+                    if (Array.isArray((item as any).quiz)) {
+                      setItem('sb_quiz', JSON.stringify((item as any).quiz))
+                    } else if ((item as any).quiz && Array.isArray((item as any).quiz.questions)) {
+                      setItem('sb_quiz', JSON.stringify((item as any).quiz.questions))
+                    }
+                    setSummarizerAutoLoad(true)
+                    setCurrentPage('summarize')
+                  } else {
+                    alert('No downloadable file attached to this history item')
+                  }
+                }
+              } catch (e) {
+                console.error(e)
+              }
             }}
-            onViewSummary={(docId) => {
-              setCurrentPage("summarize")
+            onViewSummary={async (docId) => {
+              try {
+                const item = await getHistory(docId)
+                // write data into per-user localStorage expected by SummarizerPage
+                try {
+                  if ((item as any).summary) setItem('sb_summary', (item as any).summary)
+                  if ((item as any).title) setItem('sb_title', (item as any).title)
+                  if (Array.isArray((item as any).key_takeaways)) setItem('sb_keypoints', JSON.stringify((item as any).key_takeaways))
+                  if (Array.isArray((item as any).flashcards)) setItem('sb_flashcards', JSON.stringify((item as any).flashcards))
+                  // history item may store quiz as an array or as an object { questions: [] }
+                  if (Array.isArray((item as any).quiz)) {
+                    setItem('sb_quiz', JSON.stringify((item as any).quiz))
+                  } else if ((item as any).quiz && Array.isArray((item as any).quiz.questions)) {
+                    setItem('sb_quiz', JSON.stringify((item as any).quiz.questions))
+                  }
+                } catch {
+                  if ((item as any).summary) localStorage.setItem('sb_summary', (item as any).summary)
+                  if ((item as any).title) localStorage.setItem('sb_title', (item as any).title)
+                  if (Array.isArray((item as any).key_takeaways)) localStorage.setItem('sb_keypoints', JSON.stringify((item as any).key_takeaways))
+                  if (Array.isArray((item as any).flashcards)) localStorage.setItem('sb_flashcards', JSON.stringify((item as any).flashcards))
+                  if (Array.isArray((item as any).quiz)) {
+                    localStorage.setItem('sb_quiz', JSON.stringify((item as any).quiz))
+                  } else if ((item as any).quiz && Array.isArray((item as any).quiz.questions)) {
+                    localStorage.setItem('sb_quiz', JSON.stringify((item as any).quiz.questions))
+                  }
+                }
+                setSummarizerAutoLoad(true)
+                setCurrentPage('summarize')
+              } catch (e) {
+                console.error(e)
+                alert('Unable to load summary for that item')
+              }
             }}
-            onViewFlashcards={(docId) => {
-              setCurrentPage("flashcards")
+            onViewFlashcards={async (docId) => {
+              try {
+                const item = await getHistory(docId)
+                try {
+                  if (Array.isArray((item as any).flashcards)) setItem('sb_flashcards', JSON.stringify((item as any).flashcards))
+                } catch {
+                  if (Array.isArray((item as any).flashcards)) localStorage.setItem('sb_flashcards', JSON.stringify((item as any).flashcards))
+                }
+                setCurrentPage('flashcards')
+              } catch (e) {
+                console.error(e)
+                alert('Unable to load flashcards for that item')
+              }
             }}
             onRetakeQuiz={(docId) => {
-              setQuizEntryPoint("quiz-section")
-              setCurrentPage("quiz-viewer")
+              // similar flow to summary — load quiz and then navigate
+              (async () => {
+                try {
+                  const item = await getHistory(docId)
+                  // normalize stored quiz into an array of questions for the QuizViewer
+                  try {
+                    if (Array.isArray((item as any).quiz)) {
+                      setItem('sb_quiz', JSON.stringify((item as any).quiz))
+                    } else if ((item as any).quiz && Array.isArray((item as any).quiz.questions)) {
+                      setItem('sb_quiz', JSON.stringify((item as any).quiz.questions))
+                    }
+                  } catch {
+                    if (Array.isArray((item as any).quiz)) {
+                      localStorage.setItem('sb_quiz', JSON.stringify((item as any).quiz))
+                    } else if ((item as any).quiz && Array.isArray((item as any).quiz.questions)) {
+                      localStorage.setItem('sb_quiz', JSON.stringify((item as any).quiz.questions))
+                    }
+                  }
+                  setQuizEntryPoint('quiz-section')
+                  setCurrentPage('quiz-viewer')
+                } catch (e) {
+                  console.error(e)
+                  alert('Unable to load quiz for that item')
+                }
+              })()
             }}
           />
         )
@@ -213,7 +307,7 @@ export default function Homepage() {
           <AppSidebar
             onAddTaskClick={() => setAddTaskModalOpen(true)}
             onCalendarClick={() => setCurrentPage("calendar")}
-            onSummarizeClick={() => setCurrentPage("summarize")}
+            onSummarizeClick={() => { setSummarizerAutoLoad(false); setCurrentPage("summarize") }}
             onQuizClick={() => setCurrentPage("quiz")}
             onUploadsClick={() => setCurrentPage("uploads")}
             onPomodoroClick={() => setCurrentPage("pomodoro")}
@@ -223,7 +317,20 @@ export default function Homepage() {
             onNavigate={setCurrentPage}
           />
           <SidebarInset>
-            <MainNav onUploadClick={() => setUploadModalOpen(true)} onLogout={() => setIsAuthenticated(false)} />
+            <MainNav onUploadClick={() => setUploadModalOpen(true)} onLogout={() => {
+              // Clear auth state and per-user localStorage keys on logout and return to dashboard
+              try {
+                const uid = localStorage.getItem('sb_user_id')
+                if (uid) {
+                  clearAllForUser(uid)
+                }
+              } catch {}
+              localStorage.removeItem('token')
+              localStorage.removeItem('sb_user_id')
+              localStorage.removeItem('sb_user')
+              setIsAuthenticated(false)
+              setCurrentPage('dashboard')
+            }} />
             {renderCurrentPage()}
             <FileUploadModal open={uploadModalOpen} onOpenChange={setUploadModalOpen} />
             <AddTaskModal open={addTaskModalOpen} onOpenChange={setAddTaskModalOpen} />

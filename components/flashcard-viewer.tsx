@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useMemo } from "react"
+import { getItem } from "@/lib/userLocalStorage"
 import { ChevronLeft, ChevronRight, RotateCcw, Eye, EyeOff, ArrowLeft, FileText } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -42,7 +43,12 @@ export function FlashcardViewer({ onBack, onViewQuiz, onBackToDashboard }: Flash
   const flashcards: FlashcardUI[] = useMemo(() => {
     if (typeof window !== "undefined") {
       try {
-        const raw = localStorage.getItem("sb_flashcards")
+        let raw: string | null = null
+        try {
+          raw = getItem("sb_flashcards")
+        } catch {
+          raw = localStorage.getItem("sb_flashcards")
+        }
         if (raw) {
           const parsed = JSON.parse(raw) as FlashcardData[]
           if (Array.isArray(parsed) && parsed.length > 0) {

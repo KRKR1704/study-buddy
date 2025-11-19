@@ -1,7 +1,8 @@
 "use client"
 
 import type React from "react"
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import { getItem, setItem, removeItem } from "@/lib/userLocalStorage"
 import { Upload, FileText, ArrowRight, CheckCircle, Loader2, Eye, Brain } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -11,6 +12,7 @@ interface SummarizerPageProps {
   onBackToDashboard: () => void
   onViewFlashcards: () => void
   onViewQuiz: () => void
+  autoLoad?: boolean // when true, load existing sb_* from localStorage and show results
 }
 
 type SummarizerStep = "upload" | "processing" | "results"
@@ -51,22 +53,29 @@ async function saveToHistory(payload: {
   } | undefined
 }) {
   try {
+    // Map frontend shape to backend HistoryCreate model
+    const body: any = {
+      user_id: payload.user_id,
+      kind: "summary",
+      title: payload.file_name || payload.quiz?.title || "Summary",
+      source_filename: payload.file_name,
+      source_file_id: payload.file_id,
+      summary: payload.summary,
+      key_takeaways: payload.key_takeaways || [],
+      flashcards: payload.flashcards || [],
+      quiz: payload.quiz,
+      meta: { page: "summarizer" },
+    }
+
+    const headers: Record<string, string> = { "Content-Type": "application/json" }
+    try {
+      const t = typeof window !== "undefined" ? localStorage.getItem("token") : null
+      if (t) headers["Authorization"] = `Bearer ${t}`
+    } catch {}
     const res = await fetch(HISTORY_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        user_id: payload.user_id,
-        source: "summarizer",
-        file_name: payload.file_name,
-        file_id: payload.file_id, // GridFS/S3 key if your summarize endpoint returns it
-        content_text: payload.content_text,
-        summary: payload.summary,
-        key_takeaways: payload.key_takeaways || [],
-        flashcards: payload.flashcards || [],
-        quiz: payload.quiz,
-        tags: ["summary"],
-        meta: { page: "summarizer" },
-      }),
+      headers,
+      body: JSON.stringify(body),
     })
     if (!res.ok) {
       // Log but don't interrupt the user flow
@@ -77,7 +86,7 @@ async function saveToHistory(payload: {
   }
 }
 
-export function SummarizerPage({ onBackToDashboard, onViewFlashcards, onViewQuiz }: SummarizerPageProps) {
+export function SummarizerPage({ onBackToDashboard, onViewFlashcards, onViewQuiz, autoLoad = false }: SummarizerPageProps) {
   const [currentStep, setCurrentStep] = useState<SummarizerStep>("upload")
   const [processingStep, setProcessingStep] = useState<ProcessingStep>(1)
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
@@ -90,6 +99,29 @@ export function SummarizerPage({ onBackToDashboard, onViewFlashcards, onViewQuiz
   const [wordCount, setWordCount] = useState<number>(0)
   const [readingTime, setReadingTime] = useState<string>("0 min")
   const [title, setTitle] = useState<string>("Summary")
+
+  // Load previously saved results only when explicitly requested via the
+  // `autoLoad` prop. This avoids showing stale results when the user clicks
+  // the Summarize button to upload a new file.
+  useEffect(() => {
+    if (!autoLoad) return
+    if (typeof window === "undefined") return
+    // Load namespaced values for current user
+    const s = getItem("sb_summary")
+    if (s) {
+      setSummary(s)
+      const kpRaw = getItem("sb_keypoints")
+      if (kpRaw) {
+        try {
+          const parsed = JSON.parse(kpRaw)
+          if (Array.isArray(parsed)) setKeyPoints(parsed)
+        } catch {}
+      }
+      const savedTitle = getItem("sb_title")
+      if (savedTitle) setTitle(savedTitle)
+      setCurrentStep("results")
+    }
+  }, [autoLoad])
 
   // ---------- drag & drop / file selection ----------
   const handleDrag = (e: React.DragEvent) => {
@@ -149,10 +181,10 @@ export function SummarizerPage({ onBackToDashboard, onViewFlashcards, onViewQuiz
     }
 
     // clear previous results so other pages don't show stale data
-    localStorage.removeItem("sb_flashcards")
-    localStorage.removeItem("sb_quiz")
-    localStorage.removeItem("sb_summary")
-    localStorage.removeItem("sb_keypoints")
+    removeItem("sb_flashcards")
+    removeItem("sb_quiz")
+    removeItem("sb_summary")
+    removeItem("sb_keypoints")
 
     setIsSubmitting(true)
     setCurrentStep("processing")
@@ -175,6 +207,12 @@ export function SummarizerPage({ onBackToDashboard, onViewFlashcards, onViewQuiz
         throw new Error(errText || `Request failed with status ${res.status}`)
       }
 
+      const ct = res.headers.get("content-type") || ""
+      if (!ct.includes("application/json")) {
+        const txt = await res.text().catch(() => "")
+        throw new Error(`Expected JSON but received: ${txt}`)
+      }
+
       const json = await res.json()
       if (!json?.success) {
         throw new Error(json?.error || "Summarization failed on the server.")
@@ -195,20 +233,20 @@ export function SummarizerPage({ onBackToDashboard, onViewFlashcards, onViewQuiz
       setKeyPoints(kp)
 
       // persist for other pages
-      localStorage.setItem("sb_summary", textSummary)
-      localStorage.setItem("sb_keypoints", JSON.stringify(kp))
+      setItem("sb_summary", textSummary)
+      setItem("sb_keypoints", JSON.stringify(kp))
 
       let flashcards: Flashcard[] | undefined
       if (Array.isArray(data.flashcards)) {
         flashcards = data.flashcards as Flashcard[]
-        localStorage.setItem("sb_flashcards", JSON.stringify(flashcards))
+        setItem("sb_flashcards", JSON.stringify(flashcards))
       }
 
       // Your backend might return quiz as array of items or an object. We keep your existing local type:
       let quizItems: QuizItem[] | undefined
       if (Array.isArray(data.quiz)) {
         quizItems = data.quiz as QuizItem[]
-        localStorage.setItem("sb_quiz", JSON.stringify(quizItems))
+        setItem("sb_quiz", JSON.stringify(quizItems))
       }
 
       // -------------------- NEW: Save to History (non-blocking) --------------------

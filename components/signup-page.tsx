@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import axios from "axios"
 import { Eye, EyeOff } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -21,25 +21,55 @@ export function SignupPage({ onLoginClick, onSignupSuccess }: SignupPageProps) {
     first_name: "",
     last_name: "",
     email: "",
+    country_code: "+1",
     phone: "",
     dob: "",
     username: "",
     password: ""
   })
   const [error, setError] = useState("")
+  const [emailAvailable, setEmailAvailable] = useState<boolean | null>(null)
+  const [usernameAvailable, setUsernameAvailable] = useState<boolean | null>(null)
+  const [suggestions, setSuggestions] = useState<string[]>([])
 
   const handleSignup = async () => {
-    const isValid = Object.values(form).every((v) => v !== "")
-    if (!isValid) {
+    // Basic client-side validation
+    if (!form.first_name || !form.last_name || !form.email || !form.phone || !form.dob || !form.username || !form.password) {
       setError("All fields are required")
+      return
+    }
+    if (emailAvailable === false) {
+      setError("Email is already in use")
+      return
+    }
+    if (usernameAvailable === false) {
+      setError("Username is already taken")
       return
     }
 
     try {
-      await axios.post("http://localhost:8000/auth/signup", form)
+      // Single signup request — previously this fired twice which caused a "username not available" race
+      const res = await axios.post("http://127.0.0.1:8000/auth/signup", form)
+      const userId = res?.data?.user_id
+      if (userId) localStorage.setItem("sb_user_id", userId)
+      // remove legacy global sb_* keys to avoid cross-account leakage
+      try {
+        localStorage.removeItem("sb_summary")
+        localStorage.removeItem("sb_keypoints")
+        localStorage.removeItem("sb_flashcards")
+        localStorage.removeItem("sb_quiz")
+        localStorage.removeItem("sb_title")
+      } catch {}
       onSignupSuccess()
-    } catch (err) {
-      setError("Signup failed. Try again with a different username.")
+    } catch (err: any) {
+      // show server error if provided
+      // Backend may return 400 with detail like "Username already exists" — surface that to user
+      const detail = err?.response?.data?.detail
+      if (detail) {
+        setError(String(detail))
+      } else {
+        setError("Signup failed. Try again with a different username or email.")
+      }
     }
   }
 
@@ -47,40 +77,133 @@ export function SignupPage({ onLoginClick, onSignupSuccess }: SignupPageProps) {
     setForm({ ...form, [e.target.name]: e.target.value })
   }
 
+  // Check availability endpoints
+  const checkEmail = async (email: string) => {
+    if (!email) return
+    try {
+      const res = await axios.get("http://127.0.0.1:8000/auth/check", { params: { email } })
+      setEmailAvailable(res.data?.available === true)
+    } catch {
+      setEmailAvailable(null)
+    }
+  }
+
+  const checkUsername = async (username: string) => {
+    if (!username) return
+    try {
+      const res = await axios.get("http://127.0.0.1:8000/auth/check", { params: { username } })
+      setUsernameAvailable(res.data?.available === true)
+    } catch {
+      setUsernameAvailable(null)
+    }
+  }
+
+  useEffect(() => {
+    // when username changes, prepare some suggestions
+    if (!form.username) {
+      setSuggestions([])
+      return
+    }
+    const base = form.username.replace(/[^a-zA-Z0-9]/g, "")
+    const s = [base, `${base}${Math.floor(Math.random()*90)+10}`, `${base}_${Math.floor(Math.random()*900)+100}`].filter(Boolean)
+    setSuggestions(s)
+  }, [form.username])
+
+  // simple phone validation per country code (length-based)
+  const phoneRules: Record<string, number> = {
+    "+1": 10, // US
+    "+91": 10, // IN
+    "+44": 10, // UK (local part typically 10)
+    "+61": 9,  // AU
+  }
+
+  const validatePhone = (code: string, phone: string) => {
+    const expected = phoneRules[code] || 7
+    const digits = phone.replace(/\D/g, "")
+    return digits.length === expected
+  }
+
   return (
-    <Card className="w-[350px]">
-      <CardHeader>
-        <CardTitle className="text-2xl">Sign Up</CardTitle>
-        <CardDescription>Create your account</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="grid gap-2">
-          {["first_name", "last_name", "email", "phone", "dob", "username", "password"].map((field) => (
-            <div key={field} className="grid gap-1">
-              <Label htmlFor={field}>{field.replace("_", " ")}</Label>
-              <Input
-                id={field}
-                name={field}
-                type={field === "password" ? (showPassword ? "text" : "password") : "text"}
-                value={(form as any)[field]}
-                onChange={handleChange}
-                placeholder={field}
-                required
-              />
+    <div className="min-h-screen flex items-center justify-center px-4">
+      <Card className="w-full max-w-xl">
+        <CardHeader>
+          <CardTitle className="text-2xl">Sign Up</CardTitle>
+          <CardDescription>Create your account</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-4">
+            <div className="grid grid-cols-2 gap-2">
+              <div className="grid gap-1">
+                <Label htmlFor="first_name">First Name</Label>
+                <Input id="first_name" name="first_name" value={form.first_name} onChange={handleChange} placeholder="First name" />
+              </div>
+              <div className="grid gap-1">
+                <Label htmlFor="last_name">Last Name</Label>
+                <Input id="last_name" name="last_name" value={form.last_name} onChange={handleChange} placeholder="Last name" />
+              </div>
             </div>
-          ))}
-          <button
-            type="button"
-            onClick={() => setShowPassword(!showPassword)}
-            className="text-sm text-blue-500 text-left"
-          >
-            {showPassword ? "Hide password" : "Show password"}
-          </button>
-          {error && <p className="text-red-500 text-sm">{error}</p>}
-          <Button onClick={handleSignup}>Sign Up</Button>
-          <Button variant="link" onClick={onLoginClick}>Already have an account? Log in</Button>
-        </div>
-      </CardContent>
-    </Card>
+
+            <div className="grid gap-1">
+              <Label htmlFor="email">Email</Label>
+              <Input id="email" name="email" type="email" value={form.email} onChange={handleChange} onBlur={(e) => checkEmail(e.target.value)} placeholder="you@example.com" />
+              {emailAvailable === false && <p className="text-red-500 text-sm">Email already in use</p>}
+              {emailAvailable === true && <p className="text-green-600 text-sm">Email available</p>}
+            </div>
+
+            <div className="grid grid-cols-4 gap-2 items-end">
+              <div className="col-span-1">
+                <Label htmlFor="country_code">Code</Label>
+                <select id="country_code" name="country_code" value={form.country_code} onChange={(e) => setForm({ ...form, country_code: e.target.value })} className="w-full border rounded px-2 py-1">
+                  <option value="+1">+1 (US)</option>
+                  <option value="+91">+91 (IN)</option>
+                  <option value="+44">+44 (UK)</option>
+                  <option value="+61">+61 (AU)</option>
+                </select>
+              </div>
+              <div className="col-span-3 grid gap-1">
+                <Label htmlFor="phone">Phone</Label>
+                <Input id="phone" name="phone" value={form.phone} onChange={handleChange} placeholder="1234567890" />
+                {form.phone && !validatePhone(form.country_code, form.phone) && <p className="text-red-500 text-sm">Phone number looks invalid for selected country</p>}
+              </div>
+            </div>
+
+            <div className="grid gap-1">
+              <Label htmlFor="dob">Date of Birth</Label>
+              <Input id="dob" name="dob" type="date" value={form.dob} onChange={handleChange} />
+            </div>
+
+            <div className="grid gap-1">
+              <Label htmlFor="username">Username</Label>
+              <Input id="username" name="username" value={form.username} onChange={handleChange} onBlur={(e) => checkUsername(e.target.value)} placeholder="username" />
+              {usernameAvailable === false && <p className="text-red-500 text-sm">Username taken</p>}
+              {usernameAvailable === true && <p className="text-green-600 text-sm">Username available</p>}
+              {suggestions.length > 0 && (
+                <div className="mt-1 flex gap-2 flex-wrap">
+                  {suggestions.map((s) => (
+                    <button key={s} type="button" className="text-sm px-2 py-1 border rounded text-blue-600" onClick={() => setForm({ ...form, username: s })}>
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="grid gap-1">
+              <Label htmlFor="password">Password</Label>
+              <div className="flex gap-2 items-center">
+                <Input id="password" name="password" type={showPassword ? "text" : "password"} value={form.password} onChange={handleChange} placeholder="Password" />
+                <button type="button" onClick={() => setShowPassword(!showPassword)} className="text-sm text-blue-500">{showPassword ? 'Hide' : 'Show'}</button>
+              </div>
+            </div>
+
+            {error && <p className="text-red-500 text-sm">{error}</p>}
+            <div className="flex gap-2">
+              <Button onClick={handleSignup}>Sign Up</Button>
+              <Button variant="link" onClick={onLoginClick}>Already have an account? Log in</Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   )
 }
