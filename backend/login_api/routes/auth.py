@@ -4,6 +4,12 @@ from fastapi import APIRouter, HTTPException
 from models.user_model import UserSignup, UserLogin
 from utils.auth_utils import hash_password, verify_password, create_access_token
 from config.db import user_collection
+from datetime import datetime, timedelta
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+RESET_TOKEN_EXPIRE_MINUTES = int(os.getenv("RESET_TOKEN_EXPIRE_MINUTES", "15"))
 
 auth_router = APIRouter()
 
@@ -58,3 +64,37 @@ def login(credentials: UserLogin):
         "token_type": "bearer",
         "user_id": str(user.get("_id") or user.get("id"))
     }
+
+
+@auth_router.post("/forgot-password")
+def forgot_password(email: str):
+    """Generate a password reset token and (dev) return it. In production this should email the user."""
+    user = user_collection.find_one({"email": email})
+    if not user:
+        # Do not reveal whether the email exists
+        return {"message": "If an account exists for that email, a reset link has been sent."}
+
+    # create a short-lived token tied to the user id
+    token = create_access_token({"user_id": str(user.get("_id")), "pw_reset": True})
+    expires = datetime.utcnow() + timedelta(minutes=RESET_TOKEN_EXPIRE_MINUTES)
+    # store token metadata on user record for verification
+    user_collection.update_one({"_id": user.get("_id")}, {"$set": {"reset_token": token, "reset_expires": expires}})
+
+    # In dev return the token so it can be used; in prod you would email this link instead
+    return {"message": "Password reset token generated", "reset_token": token}
+
+
+@auth_router.post("/reset-password")
+def reset_password(token: str, new_password: str):
+    # Find user by token
+    user = user_collection.find_one({"reset_token": token})
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid or expired token")
+    expires = user.get("reset_expires")
+    if not expires or expires < datetime.utcnow():
+        raise HTTPException(status_code=400, detail="Invalid or expired token")
+
+    # update password and clear reset fields
+    hashed = hash_password(new_password)
+    user_collection.update_one({"_id": user.get("_id")}, {"$set": {"password": hashed}, "$unset": {"reset_token": "", "reset_expires": ""}})
+    return {"message": "Password has been reset"}

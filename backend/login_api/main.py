@@ -2,14 +2,15 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-# ✅ local imports (relative to main.py's folder)
+# local imports (relative to main.py's folder)
 from routes.history import router as history_router
 from routes.auth import auth_router
 from routes.summarizer import router as summarizer_router
+from routes.account import account_router
 
 app = FastAPI()
 
-# ✅ Enable CORS for frontend (React/Next.js on localhost:3000, etc.)
+# Enable CORS for frontend (React/Next.js on localhost:3000, etc.)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -26,6 +27,9 @@ app.add_middleware(
 
 # ✅ Include the routers
 app.include_router(auth_router, prefix="/auth")
+# account-related endpoints (profile, delete)
+app.include_router(account_router, prefix="/auth")
+# include summarizer routes under /api
 app.include_router(summarizer_router, prefix="/api")
 # Serve history endpoints under /api/history to match frontend expectations
 app.include_router(history_router, prefix="/api")   # now at /api/history
