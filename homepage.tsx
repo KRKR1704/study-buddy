@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { SidebarProvider } from "@/components/ui/sidebar"
 import { Toaster } from "@/components/ui/toaster"
 import { AuthWrapper } from "./components/auth-wrapper"
@@ -14,8 +14,9 @@ import { FlashcardViewer } from "./components/flashcard-viewer"
 import { UploadsPage } from "./components/uploads-page"
 import { PomodoroPage } from "./components/pomodoro-page"
 import { TaskProvider } from "./contexts/task-context"
-import { getHistory, historyDownloadUrl } from "./lib/historyClient"
-import { setItem, clearAllForUser } from "@/lib/userLocalStorage"
+import { useTasks } from "./contexts/task-context"
+import { getHistory, historyDownloadUrl, listHistory } from "./lib/historyClient"
+import { setItem, clearAllForUser, currentUserId } from "@/lib/userLocalStorage"
 import { ThemeProvider } from "./contexts/theme-context"
 import { SidebarInset } from "@/components/ui/sidebar"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -23,6 +24,7 @@ import { QuizPage } from "./components/quiz-page"
 import { QuizViewer } from "./components/quiz-viewer"
 import HistoryPage from "./components/history-page"
 import { PerformancePage } from "./components/performance-page"
+import { AccountSettings } from "./components/account-settings"
 
 type CurrentPage =
   | "dashboard"
@@ -34,18 +36,51 @@ type CurrentPage =
   | "uploads"
   | "pomodoro"
   | "history"
+  | "account"
   | "performance"
 
 export default function Homepage() {
   // Authentication state
-  const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false)
+  // avoid flicker: don't render auth UI until we've checked localStorage on the client
+  const [authChecked, setAuthChecked] = useState<boolean>(false)
+
+  // read auth token on mount (client only)
+  useEffect(() => {
+    try {
+      const t = typeof window !== "undefined" ? localStorage.getItem("token") : null
+      setIsAuthenticated(!!t)
+    } catch {
+      setIsAuthenticated(false)
+    } finally {
+      setAuthChecked(true)
+    }
+  }, [])
 
   // Page navigation state
   const [uploadModalOpen, setUploadModalOpen] = useState(false)
   const [addTaskModalOpen, setAddTaskModalOpen] = useState(false)
-  const [currentPage, setCurrentPage] = useState<CurrentPage>("dashboard")
+  const [currentPage, setCurrentPage] = useState<CurrentPage>(() => {
+    try {
+      if (typeof window !== "undefined") {
+        const p = localStorage.getItem("sb_current_page")
+        if (p) return p as CurrentPage
+      }
+    } catch {}
+    return "dashboard"
+  })
   const [quizEntryPoint, setQuizEntryPoint] = useState<"summary" | "flashcards" | "quiz-section">("quiz-section")
   const [summarizerAutoLoad, setSummarizerAutoLoad] = useState<boolean>(false)
+
+  // persist current page so reloads stay on the same page
+  useEffect(() => {
+    try {
+      if (typeof window !== "undefined") localStorage.setItem("sb_current_page", currentPage)
+    } catch {}
+  }, [currentPage])
+
+  // Wait until we've checked auth to avoid flicker between login/dashboard
+  if (!authChecked) return null
 
   // Show authentication pages if not logged in
   if (!isAuthenticated) {
@@ -53,6 +88,124 @@ export default function Homepage() {
   }
 
   // Rest of the existing homepage code remains the same...
+  function DashboardTiles() {
+    const taskCtx = useTasks ? useTasks() : { tasks: [] }
+
+    const [tasksCompletedToday, setTasksCompletedToday] = useState<number>(0)
+    const [studyStreak, setStudyStreak] = useState<string>("0 days")
+    const [weeklyPerf, setWeeklyPerf] = useState<string>("0%")
+    const [upcomingDeadlines, setUpcomingDeadlines] = useState<number>(0)
+
+    useEffect(() => {
+      try {
+        const today = new Date().toISOString().slice(0, 10)
+        const completedToday = (taskCtx.tasks || []).filter((t: any) => t.date === today && t.completed).length
+        setTasksCompletedToday(completedToday)
+
+        // upcoming deadlines in next 7 days (not completed)
+        const now = new Date()
+        const upcoming = (taskCtx.tasks || []).filter((t: any) => {
+          if (t.completed) return false
+          try {
+            const d = new Date(t.date)
+            const diff = Math.ceil((d.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+            return diff >= 0 && diff <= 7
+          } catch {
+            return false
+          }
+        }).length
+        setUpcomingDeadlines(upcoming)
+      } catch (e) {
+        console.error(e)
+      }
+    }, [taskCtx.tasks])
+
+    useEffect(() => {
+      ;(async () => {
+        try {
+          const uid = currentUserId()
+          if (!uid) return
+          const res = await listHistory({ user_id: uid, limit: 200 })
+          const items = res?.items || []
+          const daysWithActivity = new Set(items.map((it: any) => (it.created_at || "").slice(0, 10)))
+
+          // compute streak (consecutive days ending today)
+          let streak = 0
+          const today = new Date()
+          for (let i = 0; i < 365; i++) {
+            const d = new Date()
+            d.setDate(today.getDate() - i)
+            const key = d.toISOString().slice(0, 10)
+            if (daysWithActivity.has(key)) streak++
+            else break
+          }
+          setStudyStreak(`${streak} day${streak === 1 ? "" : "s"}`)
+
+          // weekly performance = percent of last 7 days with activity
+          const last7 = new Set<string>()
+          for (let i = 0; i < 7; i++) {
+            const d = new Date()
+            d.setDate(today.getDate() - i)
+            last7.add(d.toISOString().slice(0, 10))
+          }
+          let active = 0
+          for (const d of Array.from(last7)) if (daysWithActivity.has(d)) active++
+          const perf = Math.round((active / 7) * 100)
+          setWeeklyPerf(`${perf}%`)
+        } catch (e) {
+          console.error(e)
+        }
+      })()
+    }, [])
+
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <Card className="dark:bg-gray-800 dark:border-gray-700">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium dark:text-white">Tasks Completed Today</CardTitle>
+            <span className="text-2xl">✅</span>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold dark:text-white">{tasksCompletedToday}</div>
+            <p className="text-xs text-muted-foreground">{tasksCompletedToday >= 0 ? "+" + Math.max(0, tasksCompletedToday - 0) + " from yesterday" : ""}</p>
+          </CardContent>
+        </Card>
+
+        <Card className="dark:bg-gray-800 dark:border-gray-700">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium dark:text-white">Study Streak</CardTitle>
+            <span className="text-2xl">🔥</span>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold dark:text-white">{studyStreak}</div>
+            <p className="text-xs text-muted-foreground">Keep it up!</p>
+          </CardContent>
+        </Card>
+
+        <Card className="dark:bg-gray-800 dark:border-gray-700">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium dark:text-white">Weekly Performance</CardTitle>
+            <span className="text-2xl">📊</span>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold dark:text-white">{weeklyPerf}</div>
+            <p className="text-xs text-muted-foreground">+{0}% from last week</p>
+          </CardContent>
+        </Card>
+
+        <Card className="dark:bg-gray-800 dark:border-gray-700">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium dark:text-white">Upcoming Deadlines</CardTitle>
+            <span className="text-2xl">⏰</span>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-red-600">{upcomingDeadlines}</div>
+            <p className="text-xs text-muted-foreground">This week</p>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
   const renderCurrentPage = () => {
     switch (currentPage) {
       case "calendar":
@@ -231,6 +384,8 @@ export default function Homepage() {
             }}
           />
         )
+      case "account":
+        return <AccountSettings />
       case "performance":
         return <PerformancePage onBackToDashboard={() => setCurrentPage("dashboard")} />
       case "dashboard":
@@ -248,51 +403,7 @@ export default function Homepage() {
               {/* Performance Dashboard */}
               <div className="space-y-6">
                 {/* Overview Cards */}
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                  <Card className="dark:bg-gray-800 dark:border-gray-700">
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                      <CardTitle className="text-sm font-medium dark:text-white">Tasks Completed Today</CardTitle>
-                      <span className="text-2xl">✅</span>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="text-2xl font-bold dark:text-white">8</div>
-                      <p className="text-xs text-muted-foreground">+2 from yesterday</p>
-                    </CardContent>
-                  </Card>
-
-                  <Card className="dark:bg-gray-800 dark:border-gray-700">
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                      <CardTitle className="text-sm font-medium dark:text-white">Study Streak</CardTitle>
-                      <span className="text-2xl">🔥</span>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="text-2xl font-bold dark:text-white">12 days</div>
-                      <p className="text-xs text-muted-foreground">Keep it up!</p>
-                    </CardContent>
-                  </Card>
-
-                  <Card className="dark:bg-gray-800 dark:border-gray-700">
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                      <CardTitle className="text-sm font-medium dark:text-white">Weekly Performance</CardTitle>
-                      <span className="text-2xl">📊</span>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="text-2xl font-bold dark:text-white">85%</div>
-                      <p className="text-xs text-muted-foreground">+5% from last week</p>
-                    </CardContent>
-                  </Card>
-
-                  <Card className="dark:bg-gray-800 dark:border-gray-700">
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                      <CardTitle className="text-sm font-medium dark:text-white">Upcoming Deadlines</CardTitle>
-                      <span className="text-2xl">⏰</span>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="text-2xl font-bold text-red-600">3</div>
-                      <p className="text-xs text-muted-foreground">This week</p>
-                    </CardContent>
-                  </Card>
-                </div>
+                <DashboardTiles />
               </div>
             </div>
           </div>

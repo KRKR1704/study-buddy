@@ -109,6 +109,23 @@ export function LoginPage({ onSignupClick, onLoginSuccess }: LoginPageProps) {
                     {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                   </button>
                 </div>
+                <div className="text-right">
+                  <button type="button" className="text-sm text-blue-600" onClick={async () => {
+                    const email = window.prompt("Enter your account email to receive a reset token:")
+                    if (!email) return
+                    try {
+                      const res = await axios.post("http://localhost:8000/auth/forgot-password", null, { params: { email } })
+                      // In dev the API returns the token so show it; in production this would be emailed
+                      if (res.data?.reset_token) {
+                        alert(`Password reset token (dev): ${res.data.reset_token}`)
+                      } else {
+                        alert(res.data?.message || 'If an account exists, a reset link was sent.')
+                      }
+                    } catch (e: any) {
+                      alert(e?.response?.data?.detail || 'Unable to request password reset')
+                    }
+                  }}>Forgot password?</button>
+                </div>
               </div>
 
               {error && <p className="text-red-500 text-sm">{error}</p>}

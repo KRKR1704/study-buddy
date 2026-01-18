@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { Calendar, FileText, HelpCircle, Upload, Timer, History, BarChart3, Plus, Home } from "lucide-react"
+import { Calendar, FileText, HelpCircle, Upload, Timer, History, BarChart3, Plus, Home, User } from "lucide-react"
 
 import {
   Sidebar,
@@ -62,6 +62,11 @@ const menuItems = [
     icon: BarChart3,
     action: "performance",
   },
+  {
+    title: "Account",
+    icon: User,
+    action: "account",
+  },
 ]
 
 interface AppSidebarProps extends React.ComponentProps<typeof Sidebar> {
@@ -75,7 +80,7 @@ interface AppSidebarProps extends React.ComponentProps<typeof Sidebar> {
   onPerformanceClick: () => void
   currentPage: string
   onNavigate: (
-    page: "dashboard" | "calendar" | "summarize" | "quiz" | "uploads" | "pomodoro" | "history" | "performance",
+    page: "dashboard" | "calendar" | "summarize" | "quiz" | "uploads" | "pomodoro" | "history" | "performance" | "account",
   ) => void
 }
 
@@ -111,6 +116,8 @@ export function AppSidebar({
       onNavigate("history")
     } else if (item.action === "performance") {
       onNavigate("performance")
+    } else if (item.action === "account") {
+      onNavigate("account")
     }
     // Handle other menu items with URLs normally
   }
@@ -135,7 +142,8 @@ export function AppSidebar({
                       (item.action === "uploads" && currentPage === "uploads") ||
                       (item.action === "pomodoro" && currentPage === "pomodoro") ||
                       (item.action === "history" && currentPage === "history") ||
-                      (item.action === "performance" && currentPage === "performance")
+                      (item.action === "performance" && currentPage === "performance") ||
+                      (item.action === "account" && currentPage === "account")
                     }
                   >
                     {item.action ? (

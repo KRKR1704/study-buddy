@@ -1,9 +1,12 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { BarChart3, TrendingUp, Clock, Target, Brain, Trophy, Zap, ArrowUp, ArrowDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { useTasks } from "@/contexts/task-context"
+import { listHistory } from "@/lib/historyClient"
+import { currentUserId } from "@/lib/userLocalStorage"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Progress } from "@/components/ui/progress"
@@ -40,632 +43,91 @@ export function PerformancePage({ onBackToDashboard }: PerformancePageProps) {
   const [selectedTimeframe, setSelectedTimeframe] = useState("4weeks")
   const [selectedMetric, setSelectedMetric] = useState("completion")
 
-  // Replace the existing performanceData state and add more comprehensive data
-  const [allPerformanceData] = useState<WeeklyData[]>([
-    // Last 12 months of data (52 weeks) - I'll show a sample of key weeks
-    // Week 1 (12 months ago)
-    {
-      weekStart: "2024-01-01",
-      weekEnd: "2024-01-07",
-      days: [
-        {
-          date: "2024-01-01",
-          tasksCompleted: 5,
-          totalTasks: 8,
-          studyTime: 120,
-          quizScore: 75,
-          focusScore: 6,
-          pomodoroSessions: 4,
-          efficiency: 65,
-        },
-        {
-          date: "2024-01-02",
-          tasksCompleted: 7,
-          totalTasks: 10,
-          studyTime: 150,
-          quizScore: 80,
-          focusScore: 7,
-          pomodoroSessions: 5,
-          efficiency: 70,
-        },
-        {
-          date: "2024-01-03",
-          tasksCompleted: 6,
-          totalTasks: 9,
-          studyTime: 140,
-          quizScore: 78,
-          focusScore: 6,
-          pomodoroSessions: 5,
-          efficiency: 67,
-        },
-        {
-          date: "2024-01-04",
-          tasksCompleted: 8,
-          totalTasks: 12,
-          studyTime: 180,
-          quizScore: 82,
-          focusScore: 7,
-          pomodoroSessions: 6,
-          efficiency: 72,
-        },
-        {
-          date: "2024-01-05",
-          tasksCompleted: 9,
-          totalTasks: 13,
-          studyTime: 200,
-          quizScore: 85,
-          focusScore: 8,
-          pomodoroSessions: 7,
-          efficiency: 75,
-        },
-        {
-          date: "2024-01-06",
-          tasksCompleted: 4,
-          totalTasks: 7,
-          studyTime: 90,
-          quizScore: null,
-          focusScore: 5,
-          pomodoroSessions: 3,
-          efficiency: 60,
-        },
-        {
-          date: "2024-01-07",
-          tasksCompleted: 6,
-          totalTasks: 9,
-          studyTime: 130,
-          quizScore: 77,
-          focusScore: 6,
-          pomodoroSessions: 4,
-          efficiency: 68,
-        },
-      ],
-      weeklyAverage: { completionRate: 69, studyTime: 144, focusScore: 6.4, efficiency: 68 },
-    },
-    // Add more weeks throughout the year with gradual improvement
-    // Week 8 (10 months ago)
-    {
-      weekStart: "2024-02-19",
-      weekEnd: "2024-02-25",
-      days: [
-        {
-          date: "2024-02-19",
-          tasksCompleted: 7,
-          totalTasks: 10,
-          studyTime: 160,
-          quizScore: 78,
-          focusScore: 7,
-          pomodoroSessions: 5,
-          efficiency: 70,
-        },
-        {
-          date: "2024-02-20",
-          tasksCompleted: 9,
-          totalTasks: 12,
-          studyTime: 190,
-          quizScore: 83,
-          focusScore: 8,
-          pomodoroSessions: 6,
-          efficiency: 75,
-        },
-        {
-          date: "2024-02-21",
-          tasksCompleted: 8,
-          totalTasks: 11,
-          studyTime: 170,
-          quizScore: 80,
-          focusScore: 7,
-          pomodoroSessions: 6,
-          efficiency: 73,
-        },
-        {
-          date: "2024-02-22",
-          tasksCompleted: 10,
-          totalTasks: 14,
-          studyTime: 220,
-          quizScore: 86,
-          focusScore: 8,
-          pomodoroSessions: 8,
-          efficiency: 78,
-        },
-        {
-          date: "2024-02-23",
-          tasksCompleted: 11,
-          totalTasks: 15,
-          studyTime: 240,
-          quizScore: 88,
-          focusScore: 8,
-          pomodoroSessions: 9,
-          efficiency: 80,
-        },
-        {
-          date: "2024-02-24",
-          tasksCompleted: 6,
-          totalTasks: 9,
-          studyTime: 120,
-          quizScore: null,
-          focusScore: 6,
-          pomodoroSessions: 4,
-          efficiency: 67,
-        },
-        {
-          date: "2024-02-25",
-          tasksCompleted: 8,
-          totalTasks: 11,
-          studyTime: 160,
-          quizScore: 81,
-          focusScore: 7,
-          pomodoroSessions: 5,
-          efficiency: 73,
-        },
-      ],
-      weeklyAverage: { completionRate: 73, studyTime: 180, focusScore: 7.3, efficiency: 74 },
-    },
-    // Week 20 (6 months ago)
-    {
-      weekStart: "2024-05-13",
-      weekEnd: "2024-05-19",
-      days: [
-        {
-          date: "2024-05-13",
-          tasksCompleted: 9,
-          totalTasks: 12,
-          studyTime: 200,
-          quizScore: 82,
-          focusScore: 8,
-          pomodoroSessions: 7,
-          efficiency: 75,
-        },
-        {
-          date: "2024-05-14",
-          tasksCompleted: 11,
-          totalTasks: 14,
-          studyTime: 230,
-          quizScore: 87,
-          focusScore: 8,
-          pomodoroSessions: 8,
-          efficiency: 79,
-        },
-        {
-          date: "2024-05-15",
-          tasksCompleted: 10,
-          totalTasks: 13,
-          studyTime: 210,
-          quizScore: 84,
-          focusScore: 8,
-          pomodoroSessions: 7,
-          efficiency: 77,
-        },
-        {
-          date: "2024-05-16",
-          tasksCompleted: 12,
-          totalTasks: 15,
-          studyTime: 250,
-          quizScore: 89,
-          focusScore: 9,
-          pomodoroSessions: 9,
-          efficiency: 80,
-        },
-        {
-          date: "2024-05-17",
-          tasksCompleted: 13,
-          totalTasks: 16,
-          studyTime: 270,
-          quizScore: 91,
-          focusScore: 9,
-          pomodoroSessions: 10,
-          efficiency: 81,
-        },
-        {
-          date: "2024-05-18",
-          tasksCompleted: 7,
-          totalTasks: 10,
-          studyTime: 140,
-          quizScore: null,
-          focusScore: 7,
-          pomodoroSessions: 5,
-          efficiency: 70,
-        },
-        {
-          date: "2024-05-19",
-          tasksCompleted: 9,
-          totalTasks: 12,
-          studyTime: 180,
-          quizScore: 85,
-          focusScore: 8,
-          pomodoroSessions: 6,
-          efficiency: 75,
-        },
-      ],
-      weeklyAverage: { completionRate: 78, studyTime: 211, focusScore: 8.1, efficiency: 77 },
-    },
-    // Week 44 (1 month ago)
-    {
-      weekStart: "2024-11-04",
-      weekEnd: "2024-11-10",
-      days: [
-        {
-          date: "2024-11-04",
-          tasksCompleted: 10,
-          totalTasks: 12,
-          studyTime: 220,
-          quizScore: 87,
-          focusScore: 8,
-          pomodoroSessions: 8,
-          efficiency: 83,
-        },
-        {
-          date: "2024-11-05",
-          tasksCompleted: 12,
-          totalTasks: 14,
-          studyTime: 250,
-          quizScore: 90,
-          focusScore: 9,
-          pomodoroSessions: 9,
-          efficiency: 86,
-        },
-        {
-          date: "2024-11-06",
-          tasksCompleted: 11,
-          totalTasks: 13,
-          studyTime: 230,
-          quizScore: 88,
-          focusScore: 8,
-          pomodoroSessions: 8,
-          efficiency: 85,
-        },
-        {
-          date: "2024-11-07",
-          tasksCompleted: 14,
-          totalTasks: 16,
-          studyTime: 280,
-          quizScore: 92,
-          focusScore: 9,
-          pomodoroSessions: 10,
-          efficiency: 88,
-        },
-        {
-          date: "2024-11-08",
-          tasksCompleted: 13,
-          totalTasks: 15,
-          studyTime: 260,
-          quizScore: 89,
-          focusScore: 9,
-          pomodoroSessions: 9,
-          efficiency: 87,
-        },
-        {
-          date: "2024-11-09",
-          tasksCompleted: 8,
-          totalTasks: 11,
-          studyTime: 160,
-          quizScore: null,
-          focusScore: 7,
-          pomodoroSessions: 6,
-          efficiency: 73,
-        },
-        {
-          date: "2024-11-10",
-          tasksCompleted: 10,
-          totalTasks: 12,
-          studyTime: 200,
-          quizScore: 86,
-          focusScore: 8,
-          pomodoroSessions: 7,
-          efficiency: 83,
-        },
-      ],
-      weeklyAverage: { completionRate: 84, studyTime: 229, focusScore: 8.3, efficiency: 84 },
-    },
-    // Current weeks (last 4 weeks) - keep existing data
-    {
-      weekStart: "2024-12-02",
-      weekEnd: "2024-12-08",
-      days: [
-        {
-          date: "2024-12-02",
-          tasksCompleted: 8,
-          totalTasks: 10,
-          studyTime: 180,
-          quizScore: 85,
-          focusScore: 8,
-          pomodoroSessions: 6,
-          efficiency: 80,
-        },
-        {
-          date: "2024-12-03",
-          tasksCompleted: 12,
-          totalTasks: 15,
-          studyTime: 240,
-          quizScore: 92,
-          focusScore: 9,
-          pomodoroSessions: 8,
-          efficiency: 85,
-        },
-        {
-          date: "2024-12-04",
-          tasksCompleted: 6,
-          totalTasks: 8,
-          studyTime: 120,
-          quizScore: 78,
-          focusScore: 7,
-          pomodoroSessions: 4,
-          efficiency: 75,
-        },
-        {
-          date: "2024-12-05",
-          tasksCompleted: 15,
-          totalTasks: 18,
-          studyTime: 300,
-          quizScore: 88,
-          focusScore: 9,
-          pomodoroSessions: 10,
-          efficiency: 90,
-        },
-        {
-          date: "2024-12-06",
-          tasksCompleted: 10,
-          totalTasks: 12,
-          studyTime: 200,
-          quizScore: 95,
-          focusScore: 8,
-          pomodoroSessions: 7,
-          efficiency: 83,
-        },
-        {
-          date: "2024-12-07",
-          tasksCompleted: 5,
-          totalTasks: 8,
-          studyTime: 90,
-          quizScore: null,
-          focusScore: 6,
-          pomodoroSessions: 3,
-          efficiency: 62,
-        },
-        {
-          date: "2024-12-08",
-          tasksCompleted: 8,
-          totalTasks: 10,
-          studyTime: 150,
-          quizScore: 82,
-          focusScore: 7,
-          pomodoroSessions: 5,
-          efficiency: 80,
-        },
-      ],
-      weeklyAverage: { completionRate: 80, studyTime: 183, focusScore: 7.7, efficiency: 79 },
-    },
-    {
-      weekStart: "2024-12-09",
-      weekEnd: "2024-12-15",
-      days: [
-        {
-          date: "2024-12-09",
-          tasksCompleted: 9,
-          totalTasks: 11,
-          studyTime: 210,
-          quizScore: 90,
-          focusScore: 8,
-          pomodoroSessions: 7,
-          efficiency: 82,
-        },
-        {
-          date: "2024-12-10",
-          tasksCompleted: 14,
-          totalTasks: 16,
-          studyTime: 270,
-          quizScore: 87,
-          focusScore: 9,
-          pomodoroSessions: 9,
-          efficiency: 88,
-        },
-        {
-          date: "2024-12-11",
-          tasksCompleted: 7,
-          totalTasks: 9,
-          studyTime: 140,
-          quizScore: 93,
-          focusScore: 8,
-          pomodoroSessions: 5,
-          efficiency: 78,
-        },
-        {
-          date: "2024-12-12",
-          tasksCompleted: 16,
-          totalTasks: 18,
-          studyTime: 320,
-          quizScore: 85,
-          focusScore: 9,
-          pomodoroSessions: 11,
-          efficiency: 89,
-        },
-        {
-          date: "2024-12-13",
-          tasksCompleted: 11,
-          totalTasks: 13,
-          studyTime: 220,
-          quizScore: 91,
-          focusScore: 8,
-          pomodoroSessions: 8,
-          efficiency: 85,
-        },
-        {
-          date: "2024-12-14",
-          tasksCompleted: 6,
-          totalTasks: 9,
-          studyTime: 110,
-          quizScore: null,
-          focusScore: 7,
-          pomodoroSessions: 4,
-          efficiency: 67,
-        },
-        {
-          date: "2024-12-15",
-          tasksCompleted: 9,
-          totalTasks: 11,
-          studyTime: 180,
-          quizScore: 88,
-          focusScore: 8,
-          pomodoroSessions: 6,
-          efficiency: 82,
-        },
-      ],
-      weeklyAverage: { completionRate: 82, studyTime: 207, focusScore: 8.1, efficiency: 82 },
-    },
-    {
-      weekStart: "2024-12-16",
-      weekEnd: "2024-12-22",
-      days: [
-        {
-          date: "2024-12-16",
-          tasksCompleted: 10,
-          totalTasks: 12,
-          studyTime: 230,
-          quizScore: 92,
-          focusScore: 9,
-          pomodoroSessions: 8,
-          efficiency: 83,
-        },
-        {
-          date: "2024-12-17",
-          tasksCompleted: 13,
-          totalTasks: 15,
-          studyTime: 280,
-          quizScore: 89,
-          focusScore: 8,
-          pomodoroSessions: 10,
-          efficiency: 87,
-        },
-        {
-          date: "2024-12-18",
-          tasksCompleted: 8,
-          totalTasks: 10,
-          studyTime: 160,
-          quizScore: 95,
-          focusScore: 9,
-          pomodoroSessions: 6,
-          efficiency: 80,
-        },
-        {
-          date: "2024-12-19",
-          tasksCompleted: 17,
-          totalTasks: 19,
-          studyTime: 340,
-          quizScore: 87,
-          focusScore: 9,
-          pomodoroSessions: 12,
-          efficiency: 89,
-        },
-        {
-          date: "2024-12-20",
-          tasksCompleted: 12,
-          totalTasks: 14,
-          studyTime: 250,
-          quizScore: 93,
-          focusScore: 8,
-          pomodoroSessions: 9,
-          efficiency: 86,
-        },
-        {
-          date: "2024-12-21",
-          tasksCompleted: 7,
-          totalTasks: 10,
-          studyTime: 130,
-          quizScore: null,
-          focusScore: 7,
-          pomodoroSessions: 5,
-          efficiency: 70,
-        },
-        {
-          date: "2024-12-22",
-          tasksCompleted: 10,
-          totalTasks: 12,
-          studyTime: 200,
-          quizScore: 90,
-          focusScore: 8,
-          pomodoroSessions: 7,
-          efficiency: 83,
-        },
-      ],
-      weeklyAverage: { completionRate: 84, studyTime: 227, focusScore: 8.3, efficiency: 83 },
-    },
-    {
-      weekStart: "2024-12-23",
-      weekEnd: "2024-12-29",
-      days: [
-        {
-          date: "2024-12-23",
-          tasksCompleted: 11,
-          totalTasks: 13,
-          studyTime: 240,
-          quizScore: 88,
-          focusScore: 8,
-          pomodoroSessions: 8,
-          efficiency: 85,
-        },
-        {
-          date: "2024-12-24",
-          tasksCompleted: 5,
-          totalTasks: 8,
-          studyTime: 90,
-          quizScore: null,
-          focusScore: 6,
-          pomodoroSessions: 3,
-          efficiency: 62,
-        },
-        {
-          date: "2024-12-25",
-          tasksCompleted: 3,
-          totalTasks: 5,
-          studyTime: 60,
-          quizScore: null,
-          focusScore: 5,
-          pomodoroSessions: 2,
-          efficiency: 60,
-        },
-        {
-          date: "2024-12-26",
-          tasksCompleted: 8,
-          totalTasks: 10,
-          studyTime: 180,
-          quizScore: 85,
-          focusScore: 7,
-          pomodoroSessions: 6,
-          efficiency: 80,
-        },
-        {
-          date: "2024-12-27",
-          tasksCompleted: 14,
-          totalTasks: 16,
-          studyTime: 290,
-          quizScore: 92,
-          focusScore: 9,
-          pomodoroSessions: 10,
-          efficiency: 88,
-        },
-        {
-          date: "2024-12-28",
-          tasksCompleted: 9,
-          totalTasks: 12,
-          studyTime: 200,
-          quizScore: 87,
-          focusScore: 8,
-          pomodoroSessions: 7,
-          efficiency: 75,
-        },
-        {
-          date: "2024-12-29",
-          tasksCompleted: 12,
-          totalTasks: 15,
-          studyTime: 260,
-          quizScore: 90,
-          focusScore: 8,
-          pomodoroSessions: 9,
-          efficiency: 80,
-        },
-      ],
-      weeklyAverage: { completionRate: 75, studyTime: 189, focusScore: 7.3, efficiency: 76 },
-    },
-  ])
+  // Dynamic performance data built from tasks + history
+  const [allPerformanceData, setAllPerformanceData] = useState<WeeklyData[]>([])
+
+  const taskCtx = useTasks()
+
+  useEffect(() => {
+    let mounted = true
+    ;(async () => {
+      try {
+        const uid = currentUserId()
+        const historyRes = uid ? await listHistory({ user_id: uid, limit: 1000 }) : { items: [] }
+        const historyItems = historyRes?.items || []
+
+        const today = new Date()
+        // build past 52 weeks (0 = current week)
+        const weeks: WeeklyData[] = []
+        for (let i = 51; i >= 0; i--) {
+          const wkStart = new Date(today)
+          // set to start of week (Sunday)
+          const offset = wkStart.getDay() + i * 7
+          wkStart.setDate(wkStart.getDate() - offset)
+          wkStart.setHours(0, 0, 0, 0)
+          const wkEnd = new Date(wkStart)
+          wkEnd.setDate(wkStart.getDate() + 6)
+
+          const days: DailyProductivity[] = []
+          for (let d = 0; d < 7; d++) {
+            const day = new Date(wkStart)
+            day.setDate(wkStart.getDate() + d)
+            const dateStr = day.toISOString().slice(0, 10)
+
+            const tasksForDay = (taskCtx?.tasks || []).filter((t: any) => t.date === dateStr)
+            const totalTasks = tasksForDay.length
+            const tasksCompleted = tasksForDay.filter((t: any) => t.completed).length
+            const studyTime = Math.round((tasksForDay.reduce((s: number, t: any) => s + (t.hoursPerDay || 0), 0) || 0) * 60)
+
+            // aggregate history items for this date
+            const itemsForDay = historyItems.filter((it: any) => (it.created_at || "").slice(0, 10) === dateStr)
+            const quizScores = itemsForDay.map((it: any) => (it.quiz && (it.quiz.score ?? null)) || null).filter((q: any) => q != null)
+            const quizScore = quizScores.length > 0 ? Math.round(quizScores.reduce((a: number, b: number) => a + b, 0) / quizScores.length) : null
+
+            const focusScores = itemsForDay.map((it: any) => it.meta?.focus_score).filter((f: any) => typeof f === "number")
+            const focusScore = focusScores.length > 0 ? Math.round((focusScores.reduce((a: number, b: number) => a + b, 0) / focusScores.length) * 10) / 10 : Math.round((quizScore || 70) / 10)
+
+            const pomodoroSessions = Math.max(0, Math.round(studyTime / 25))
+
+            const efficiency = totalTasks > 0 ? Math.round((tasksCompleted / totalTasks) * 100) : Math.round((focusScore / 10) * 100)
+
+            days.push({
+              date: dateStr,
+              tasksCompleted,
+              totalTasks: totalTasks || 1,
+              studyTime,
+              quizScore,
+              focusScore,
+              pomodoroSessions,
+              efficiency,
+            })
+          }
+
+          // weekly averages
+          const weeklyAverage = {
+            completionRate: Math.round((days.reduce((s, d) => s + (d.totalTasks > 0 ? (d.tasksCompleted / d.totalTasks) * 100 : 0), 0) / 7) || 0),
+            studyTime: Math.round(days.reduce((s, d) => s + d.studyTime, 0) / 7),
+            focusScore: Math.round((days.reduce((s, d) => s + (d.focusScore || 0), 0) / 7) * 10) / 10,
+            efficiency: Math.round(days.reduce((s, d) => s + d.efficiency, 0) / 7),
+          }
+
+          weeks.push({
+            weekStart: wkStart.toISOString().slice(0, 10),
+            weekEnd: wkEnd.toISOString().slice(0, 10),
+            days,
+            weeklyAverage,
+          })
+        }
+
+        if (mounted) setAllPerformanceData(weeks)
+      } catch (e) {
+        console.error(e)
+      }
+    })()
+    return () => {
+      mounted = false
+    }
+  }, [taskCtx?.tasks])
 
   const getFilteredData = () => {
     const now = new Date()

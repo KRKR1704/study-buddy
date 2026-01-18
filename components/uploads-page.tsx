@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Upload, FileText, Trash2, Download, Eye, Calendar, Search, Filter } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -20,6 +20,9 @@ interface UploadedFile {
   summaryGenerated: boolean
   quizGenerated: boolean
   flashcardsGenerated: boolean
+  // optional backend pointers
+  historyId?: string
+  sourceFileId?: string
 }
 
 interface UploadsPageProps {
@@ -106,6 +109,46 @@ export function UploadsPage({
     },
   ])
 
+  // if NEXT_PUBLIC_API_BASE is set, use it for real data
+  const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:8000").replace(/\/+$/, "")
+  const [files, setFiles] = useState<UploadedFile[] | null>(null)
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const token = typeof window !== "undefined" ? localStorage.getItem("token") : null
+        const headers: Record<string, string> = {}
+        if (token) headers["Authorization"] = `Bearer ${token}`
+        let res = await fetch(`${API_BASE}/api/history?kind=upload`, { headers })
+        // If server rejects header auth (401), retry by sending token as a query param (dev fallback)
+        if (res.status === 401 && token) {
+          res = await fetch(`${API_BASE}/api/history?kind=upload&token=${encodeURIComponent(token)}`)
+        }
+        if (!res.ok) throw new Error(`Failed to load: ${res.status}`)
+        const data = await res.json()
+        // map backend history items to UploadedFile
+        const mapped: UploadedFile[] = (data || []).map((h: any) => ({
+          id: h._id || h.id,
+          name: h.source_filename || h.title || `upload-${h._id}`,
+          type: (h.content && h.content.type) || "application/octet-stream",
+          size: (h.content && h.content.size) || 0,
+          uploadDate: h.created_at || h.createdAt || new Date().toISOString(),
+          status: "processed",
+          category: "document",
+          summaryGenerated: Boolean(h.summary),
+          quizGenerated: Boolean(h.quiz || h.questions),
+          flashcardsGenerated: Boolean(h.flashcards || h.cards),
+          historyId: h._id || h.id,
+          sourceFileId: h.source_file_id || (h.derived_file_ids && h.derived_file_ids[0]) || null,
+        }))
+        setFiles(mapped)
+      } catch (e) {
+        // fallback to sample data
+        setFiles(uploadedFiles)
+      }
+    }
+    load()
+  }, [])
+
   const formatFileSize = (bytes: number) => {
     if (bytes === 0) return "0 Bytes"
     const k = 1024
@@ -171,15 +214,24 @@ export function UploadsPage({
     })
   }
 
-  const handleDownloadFile = (fileId: string, fileName: string) => {
-    // In a real app, this would download the file
+  const handleDownloadFile = (file: UploadedFile) => {
+    // If we have backend pointers, open the download URL; otherwise show toast
+    if (file.historyId && file.sourceFileId) {
+      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null
+      const base = `${API_BASE}/api/history/${encodeURIComponent(file.historyId)}/download/${encodeURIComponent(file.sourceFileId)}`
+      const href = token ? `${base}?token=${encodeURIComponent(token)}` : base
+      window.open(href, "_blank")
+      return
+    }
     toast({
       title: "Download Started",
-      description: `Downloading "${fileName}"...`,
+      description: `Downloading "${file.name}"...`,
     })
   }
 
-  const filteredFiles = uploadedFiles
+  const effectiveFiles = files ?? uploadedFiles
+
+  const filteredFiles = effectiveFiles
     .filter((file) => {
       const matchesSearch = file.name.toLowerCase().includes(searchTerm.toLowerCase())
       const matchesFilter = filterType === "all" || file.category === filterType
@@ -353,7 +405,7 @@ export function UploadsPage({
 
                         {/* Action Buttons */}
                         <div className="flex items-center gap-2">
-                          <Button size="sm" variant="outline" onClick={() => handleDownloadFile(file.id, file.name)}>
+                          <Button size="sm" variant="outline" onClick={() => handleDownloadFile(file)}>
                             <Download className="h-3 w-3 mr-1" />
                             Download
                           </Button>
@@ -361,7 +413,7 @@ export function UploadsPage({
                             <Button
                               size="sm"
                               variant="outline"
-                              onClick={() => onViewSummary(file.id)}
+                              onClick={() => onViewSummary(file.historyId || file.id)}
                               className="text-blue-600 hover:text-blue-700"
                             >
                               <Eye className="h-3 w-3 mr-1" />
@@ -372,7 +424,7 @@ export function UploadsPage({
                             <Button
                               size="sm"
                               variant="outline"
-                              onClick={() => onViewFlashcards(file.id)}
+                              onClick={() => onViewFlashcards(file.historyId || file.id)}
                               className="text-purple-600 hover:text-purple-700"
                             >
                               <Eye className="h-3 w-3 mr-1" />
@@ -383,7 +435,7 @@ export function UploadsPage({
                             <Button
                               size="sm"
                               variant="outline"
-                              onClick={() => onViewQuiz(file.id)}
+                              onClick={() => onViewQuiz(file.historyId || file.id)}
                               className="text-green-600 hover:text-green-700"
                             >
                               <Eye className="h-3 w-3 mr-1" />

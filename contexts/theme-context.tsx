@@ -25,13 +25,18 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
-    // Apply theme to document
+    // Apply theme to document: only toggle the `dark` class so Tailwind's `dark:` variants work
     const root = window.document.documentElement
-    root.classList.remove("light", "dark")
-    root.classList.add(theme)
+    if (theme === "dark") {
+      root.classList.add("dark")
+    } else {
+      root.classList.remove("dark")
+    }
 
     // Save theme preference
-    localStorage.setItem("theme", theme)
+    try {
+      localStorage.setItem("theme", theme)
+    } catch {}
   }, [theme])
 
   const toggleTheme = () => {
