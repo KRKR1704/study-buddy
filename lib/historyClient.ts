@@ -93,7 +93,7 @@ export async function listHistory(params: {
 export function historyDownloadUrl(itemId: string, fileId: string) {
   const token = getStoredToken();
   const base = `${API_BASE}/api/history/${encodeURIComponent(itemId)}/download/${encodeURIComponent(fileId)}`;
-  return token ? `${base}?token=${encodeURIComponent(token)}` : base;
+  return base;
 }
 
 export async function getHistory(itemId: string, user_id?: string) {

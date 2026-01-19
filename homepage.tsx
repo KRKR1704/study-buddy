@@ -286,7 +286,21 @@ export default function Homepage() {
                 const fileId = (item as any).source_file_id || (item as any).file_id || ((item as any).derived_file_ids && (item as any).derived_file_ids[0])
                 if (fileId) {
                   const url = historyDownloadUrl(docId, fileId)
-                  window.open(url, "_blank")
+                  try {
+                    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+                    const headers: Record<string, string> = {}
+                    if (token) headers['Authorization'] = `Bearer ${token}`
+                    const res = await fetch(url, { headers })
+                    if (!res.ok) {
+                      throw new Error(`Download failed: ${res.status}`)
+                    }
+                    const blob = await res.blob()
+                    const blobUrl = URL.createObjectURL(blob)
+                    window.open(blobUrl, '_blank')
+                  } catch (e) {
+                    console.error('Download error', e)
+                    alert('Unable to download file. Please try again or check your login.')
+                  }
                 } else {
                   // If there's no downloadable file, fall back to opening the summary view
                   if ((item as any).summary) {

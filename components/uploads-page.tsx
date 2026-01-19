@@ -119,10 +119,6 @@ export function UploadsPage({
         const headers: Record<string, string> = {}
         if (token) headers["Authorization"] = `Bearer ${token}`
         let res = await fetch(`${API_BASE}/api/history?kind=upload`, { headers })
-        // If server rejects header auth (401), retry by sending token as a query param (dev fallback)
-        if (res.status === 401 && token) {
-          res = await fetch(`${API_BASE}/api/history?kind=upload&token=${encodeURIComponent(token)}`)
-        }
         if (!res.ok) throw new Error(`Failed to load: ${res.status}`)
         const data = await res.json()
         // map backend history items to UploadedFile
