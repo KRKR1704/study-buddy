@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import axios from "axios"
+import { api } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -29,8 +29,8 @@ export function AccountSettings() {
       setLoading(false)
       return
     }
-    axios
-      .get(`${apiBase}/auth/profile`, { headers: { Authorization: `Bearer ${token}` } })
+    api
+      .get(`/auth/profile`)
       .then((res) => {
         const data = res.data?.data || {}
         setFirstName(data.first_name || "")
@@ -47,11 +47,7 @@ export function AccountSettings() {
     const token = localStorage.getItem("token")
     if (!token) return setError("Not authenticated")
     try {
-      await axios.put(
-        `${apiBase}/auth/profile`,
-        { first_name: firstName, last_name: lastName, email },
-        { headers: { Authorization: `Bearer ${token}` } }
-      )
+      await api.put(`/auth/profile`, { first_name: firstName, last_name: lastName, email })
       setMessage("Profile updated")
     } catch (err: any) {
       setError(err?.response?.data?.detail || "Update failed")
@@ -63,7 +59,7 @@ export function AccountSettings() {
     const token = localStorage.getItem("token")
     if (!token) return setError("Not authenticated")
     try {
-      await axios.delete(`${apiBase}/auth/delete-account`, { headers: { Authorization: `Bearer ${token}` } })
+      await api.delete(`/auth/delete-account`)
       // clear auth and reload
       localStorage.removeItem("token")
       localStorage.removeItem("sb_user_id")
@@ -82,11 +78,7 @@ export function AccountSettings() {
     const token = localStorage.getItem("token")
     if (!token) return setError("Not authenticated")
     try {
-      await axios.post(
-        `${apiBase}/auth/change-password`,
-        { old_password: currentPassword, new_password: newPassword },
-        { headers: { Authorization: `Bearer ${token}` } }
-      )
+      await api.post(`/auth/change-password`, { old_password: currentPassword, new_password: newPassword })
       setMessage("Password changed")
       // force logout so old tokens are not usable; require re-login after password change
       try {
