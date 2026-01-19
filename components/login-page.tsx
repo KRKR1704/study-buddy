@@ -2,7 +2,7 @@
 
 import type React from "react"
 import { useState } from "react"
-import axios from "axios"
+import { api } from "@/lib/api"
 import { Eye, EyeOff } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -27,7 +27,7 @@ export function LoginPage({ onSignupClick, onLoginSuccess }: LoginPageProps) {
   const handleLogin = async () => {
     setError("")
     try {
-      const response = await axios.post("http://localhost:8000/auth/login", {
+      const response = await api.post("/auth/login", {
         username,
         password,
       })
@@ -114,7 +114,7 @@ export function LoginPage({ onSignupClick, onLoginSuccess }: LoginPageProps) {
                     const email = window.prompt("Enter your account email to receive a reset token:")
                     if (!email) return
                     try {
-                      const res = await axios.post("http://localhost:8000/auth/forgot-password", null, { params: { email } })
+                      const res = await api.post("/auth/forgot-password", null, { params: { email } })
                       // In dev the API returns the token so show it; in production this would be emailed
                       if (res.data?.reset_token) {
                         alert(`Password reset token (dev): ${res.data.reset_token}`)

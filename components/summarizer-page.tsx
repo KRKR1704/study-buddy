@@ -21,9 +21,8 @@ type ProcessingStep = 1 | 2 | 3
 type Flashcard = { front: string; back: string }
 type QuizItem = { question: string; options: string[]; answerIndex: number; explanation?: string }
 
-// Prefer env; fallback to local dev
-const API_BASE =
-  (process.env.NEXT_PUBLIC_API_BASE?.replace(/\/+$/, "") || "http://127.0.0.1:8000").replace(/\/+$/, "")
+// Prefer env; do not hardcode localhost
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE || "").replace(/\/+$/, "")
 
 const API_URL = `${API_BASE}/api/summarize/`
 const HISTORY_URL = `${API_BASE}/api/history`

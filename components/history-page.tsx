@@ -36,7 +36,7 @@ export default function HistoryPage({
   const [error, setError] = useState<string | null>(null)
 
   // Prefer env; fallback to localhost
-  const API_BASE = (process.env.NEXT_PUBLIC_API_BASE?.replace(/\/+$/, "") || "http://127.0.0.1:8000").replace(/\/+$/, "")
+  const API_BASE = (process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE || "").replace(/\/+$/, "")
 
   // derive current user id from localStorage (or fallback)
   const getCurrentUserId = () => {

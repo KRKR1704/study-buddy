@@ -109,8 +109,8 @@ export function UploadsPage({
     },
   ])
 
-  // if NEXT_PUBLIC_API_BASE is set, use it for real data
-  const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:8000").replace(/\/+$/, "")
+  // Use env-provided API base (no hardcoded localhost)
+  const API_BASE = (process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE || "").replace(/\/+$/, "")
   const [files, setFiles] = useState<UploadedFile[] | null>(null)
   useEffect(() => {
     const load = async () => {
