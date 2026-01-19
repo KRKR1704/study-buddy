@@ -30,9 +30,9 @@ export type HistoryItem = {
   updated_at: string;       // ISO string
 };
 
-// If your FastAPI is behind a different origin, set NEXT_PUBLIC_API_BASE accordingly
+// If your FastAPI is behind a different origin, set NEXT_PUBLIC_API_URL or NEXT_PUBLIC_API_BASE
 const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE?.replace(/\/+$/, "") || "";
+  (process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE || "").replace(/\/+$/, "");
 
 function getStoredToken() {
   if (typeof window === "undefined") return null;
