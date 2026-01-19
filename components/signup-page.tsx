@@ -2,7 +2,7 @@
 
 import type React from "react"
 import { useState, useEffect } from "react"
-import axios from "axios"
+import { api } from "@/lib/api"
 import { Eye, EyeOff } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -49,7 +49,7 @@ export function SignupPage({ onLoginClick, onSignupSuccess }: SignupPageProps) {
 
     try {
       // Single signup request — previously this fired twice which caused a "username not available" race
-      const res = await axios.post("http://127.0.0.1:8000/auth/signup", form)
+      const res = await api.post("/auth/signup", form)
       const userId = res?.data?.user_id
       if (userId) localStorage.setItem("sb_user_id", userId)
       // remove legacy global sb_* keys to avoid cross-account leakage
@@ -81,7 +81,7 @@ export function SignupPage({ onLoginClick, onSignupSuccess }: SignupPageProps) {
   const checkEmail = async (email: string) => {
     if (!email) return
     try {
-      const res = await axios.get("http://127.0.0.1:8000/auth/check", { params: { email } })
+      const res = await api.get("/auth/check", { params: { email } })
       setEmailAvailable(res.data?.available === true)
     } catch {
       setEmailAvailable(null)
@@ -91,7 +91,7 @@ export function SignupPage({ onLoginClick, onSignupSuccess }: SignupPageProps) {
   const checkUsername = async (username: string) => {
     if (!username) return
     try {
-      const res = await axios.get("http://127.0.0.1:8000/auth/check", { params: { username } })
+      const res = await api.get("/auth/check", { params: { username } })
       setUsernameAvailable(res.data?.available === true)
     } catch {
       setUsernameAvailable(null)
