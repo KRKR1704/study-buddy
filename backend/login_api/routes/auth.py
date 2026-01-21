@@ -9,7 +9,7 @@ import os
 from dotenv import load_dotenv
 
 from utils.otp import generate_otp
-from services.email_service import send_otp_email, send_welcome_email
+from services.email_service import send_otp_email, send_welcome_email, send_test_email
 
 load_dotenv()
 RESET_TOKEN_EXPIRE_MINUTES = int(os.getenv("RESET_TOKEN_EXPIRE_MINUTES", "15"))
@@ -119,25 +119,16 @@ def verify_otp(payload: UserVerifyOTP):
 
 
 @auth_router.get("/test-email")
-def test_email():
-    """Send a simple test email using the Resend client to help debug delivery issues.
-
-    Set `TEST_SEND_TO` in the backend `.env` to control the recipient (defaults to your email placeholder).
-    """
-    test_to = os.getenv("TEST_SEND_TO", "yourtestemail@example.com")
+def test_email(to: str = None):
+    """Send a simple test email. Provide ?to=your@email.com or set TEST_EMAIL in env."""
+    recipient = to or os.getenv("TEST_EMAIL")
+    if not recipient:
+        raise HTTPException(status_code=400, detail="No recipient specified. Provide ?to= or set TEST_EMAIL env var.")
     try:
-        # Use the client exposed by the email service to send a direct test message
-        from services.email_service import client, FROM_EMAIL
-
-        resp = client.emails.send(
-            from_=FROM_EMAIL,
-            to=[test_to],
-            subject="Test Email from Study Buddy Backend",
-            text="This is a test from the Study Buddy backend."
-        )
+        resp = send_test_email(recipient)
         return {"status": "sent", "response": resp}
     except Exception as e:
-        return {"status": "error", "detail": str(e)}
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @auth_router.post("/forgot-password")

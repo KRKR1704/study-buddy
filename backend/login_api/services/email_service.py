@@ -1,13 +1,10 @@
 from resend import Resend
 import os
 
-# Create a Resend client instance. Using the Resend client class
-# ensures we're calling the library in the supported way and makes
-# it easier to inspect responses for debugging.
+# Initialize Resend client
 client = Resend(api_key=os.getenv("RESEND_API_KEY"))
 
 FROM_EMAIL = os.getenv("FROM_EMAIL", "Study Buddy <onboarding@resend.dev>")
-
 
 def send_verification_email(email: str, token: str):
     verify_link = f"{os.getenv('FRONTEND_URL')}/verify-email?token={token}"
@@ -70,18 +67,3 @@ def send_otp_email(email: str, otp: str):
     except Exception as e:
         print("Resend send_otp_email error:", e)
         raise
-
-
-
-def send_otp_email(email: str, otp: str):
-    resend.Emails.send({
-        "from": FROM_EMAIL,
-        "to": email,
-        "subject": "Your Study Buddy Verification Code",
-        "html": f"""
-        <h2>Verify your email</h2>
-        <p>Your verification code is:</p>
-        <h1 style="letter-spacing:4px;">{otp}</h1>
-        <p>This code expires in <b>10 minutes</b>.</p>
-        """
-    })
