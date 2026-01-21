@@ -44,11 +44,11 @@ def signup(user: UserSignup):
     # Save user to database
     res = user_collection.insert_one(user_dict)
 
-    # Send OTP email (best-effort)
+    # Send OTP email (best-effort) — log failures so we can debug
     try:
         send_otp_email(user.email, otp)
-    except Exception:
-        pass
+    except Exception as e:
+        print("❌ OTP email failed:", str(e))
 
     return {"message": "OTP sent to your email", "user_id": str(res.inserted_id)}
 
@@ -111,8 +111,8 @@ def verify_otp(payload: UserVerifyOTP):
 
     try:
         send_welcome_email(user["email"])
-    except Exception:
-        pass
+    except Exception as e:
+        print("❌ Welcome email failed:", str(e))
 
     return {"message": "Email verified successfully"}
 

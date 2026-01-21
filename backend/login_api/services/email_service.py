@@ -2,7 +2,7 @@ import os
 import resend
 
 # Config
-FROM_EMAIL = os.getenv("FROM_EMAIL", "Study Buddy <onboarding@resend.dev>")
+FROM_EMAIL = os.getenv("FROM_EMAIL", "Study Buddy <no-reply@roopeshkaipa.com>")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "")
 
 
