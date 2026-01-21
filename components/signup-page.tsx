@@ -57,6 +57,7 @@ export function SignupPage({ onLoginClick, onSignupSuccess }: SignupPageProps) {
     try {
       // Single signup request — previously this fired twice which caused a "username not available" race
       const res = await api.post("/auth/signup", form)
+      console.log("signup response:", res)
       const userId = res?.data?.user_id
       if (userId) localStorage.setItem("sb_user_id", userId)
       // remove legacy global sb_* keys to avoid cross-account leakage
@@ -74,6 +75,7 @@ export function SignupPage({ onLoginClick, onSignupSuccess }: SignupPageProps) {
       setOtpError(null)
       setOtpMsg("✅ OTP sent. Please check your email.")
     } catch (err: any) {
+      console.error("signup error:", err)
       // show server error if provided
       // Backend may return 400 with detail like "Username already exists" — surface that to user
       const detail = err?.response?.data?.detail
@@ -91,13 +93,14 @@ export function SignupPage({ onLoginClick, onSignupSuccess }: SignupPageProps) {
     setOtpLoading(true)
     try {
       const res = await api.post("/auth/verify-otp", { email: form.email, otp })
-      // success → close modal and notify parent (show login)
+      console.log("verify-otp response:", res)
       setOtpMsg("✅ Verified! Redirecting to login...")
       setTimeout(() => {
         setOtpOpen(false)
         onSignupSuccess()
       }, 700)
     } catch (err: any) {
+      console.error("verify-otp error:", err)
       const detail = err?.response?.data?.detail
       setOtpError(detail || (err?.message || "OTP verification failed"))
     } finally {
