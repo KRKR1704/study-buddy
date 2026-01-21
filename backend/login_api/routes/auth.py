@@ -9,7 +9,7 @@ import os
 from dotenv import load_dotenv
 
 from utils.otp import generate_otp
-from services.email_service import send_otp_email, send_welcome_email, send_test_email
+from services.email_service import send_otp_email, send_welcome_email
 
 load_dotenv()
 RESET_TOKEN_EXPIRE_MINUTES = int(os.getenv("RESET_TOKEN_EXPIRE_MINUTES", "15"))
@@ -115,20 +115,6 @@ def verify_otp(payload: UserVerifyOTP):
         pass
 
     return {"message": "Email verified successfully"}
-
-
-
-@auth_router.get("/test-email")
-def test_email(to: str = None):
-    """Send a simple test email. Provide ?to=your@email.com or set TEST_EMAIL in env."""
-    recipient = to or os.getenv("TEST_EMAIL")
-    if not recipient:
-        raise HTTPException(status_code=400, detail="No recipient specified. Provide ?to= or set TEST_EMAIL env var.")
-    try:
-        resp = send_test_email(recipient)
-        return {"status": "sent", "response": resp}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @auth_router.post("/forgot-password")

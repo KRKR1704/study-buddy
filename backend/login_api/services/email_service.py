@@ -1,18 +1,25 @@
 import os
 import resend
 
-RESEND_API_KEY = os.getenv("RESEND_API_KEY")
-if not RESEND_API_KEY:
-    raise RuntimeError("RESEND_API_KEY is missing")
-
-resend.api_key = RESEND_API_KEY
-
+# Config
 FROM_EMAIL = os.getenv("FROM_EMAIL", "Study Buddy <onboarding@resend.dev>")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "")
 
 
+def _ensure_resend():
+    """
+    Configure resend lazily so missing env vars don't crash the whole API on import.
+    """
+    api_key = os.getenv("RESEND_API_KEY")
+    if not api_key:
+        raise RuntimeError("RESEND_API_KEY is missing")
+    resend.api_key = api_key
+
+
 def send_verification_email(email: str, token: str):
-    verify_link = f"{FRONTEND_URL}/verify-email?token={token}"
+    _ensure_resend()
+
+    verify_link = f"{FRONTEND_URL}/verify-email?token={token}" if FRONTEND_URL else token
 
     params = {
         "from": FROM_EMAIL,
@@ -35,6 +42,8 @@ def send_verification_email(email: str, token: str):
 
 
 def send_welcome_email(email: str):
+    _ensure_resend()
+
     params = {
         "from": FROM_EMAIL,
         "to": [email],
@@ -52,6 +61,8 @@ def send_welcome_email(email: str):
 
 
 def send_otp_email(email: str, otp: str):
+    _ensure_resend()
+
     params = {
         "from": FROM_EMAIL,
         "to": [email],
