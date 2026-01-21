@@ -32,6 +32,13 @@ export function SignupPage({ onLoginClick, onSignupSuccess }: SignupPageProps) {
   const [usernameAvailable, setUsernameAvailable] = useState<boolean | null>(null)
   const [suggestions, setSuggestions] = useState<string[]>([])
 
+  // OTP modal state
+  const [otpOpen, setOtpOpen] = useState(false)
+  const [otp, setOtp] = useState("")
+  const [otpLoading, setOtpLoading] = useState(false)
+  const [otpError, setOtpError] = useState<string | null>(null)
+  const [otpMsg, setOtpMsg] = useState<string | null>(null)
+
   const handleSignup = async () => {
     // Basic client-side validation
     if (!form.first_name || !form.last_name || !form.email || !form.phone || !form.dob || !form.username || !form.password) {
@@ -60,7 +67,12 @@ export function SignupPage({ onLoginClick, onSignupSuccess }: SignupPageProps) {
         localStorage.removeItem("sb_quiz")
         localStorage.removeItem("sb_title")
       } catch {}
-      onSignupSuccess()
+
+      // Instead of immediately routing to login, open OTP modal so user can verify
+      setOtpOpen(true)
+      setOtp("")
+      setOtpError(null)
+      setOtpMsg("✅ OTP sent. Please check your email.")
     } catch (err: any) {
       // show server error if provided
       // Backend may return 400 with detail like "Username already exists" — surface that to user
@@ -70,6 +82,26 @@ export function SignupPage({ onLoginClick, onSignupSuccess }: SignupPageProps) {
       } else {
         setError("Signup failed. Try again with a different username or email.")
       }
+    }
+  }
+
+  const handleVerifyOtp = async () => {
+    setOtpError(null)
+    setOtpMsg(null)
+    setOtpLoading(true)
+    try {
+      const res = await api.post("/auth/verify-otp", { email: form.email, otp })
+      // success → close modal and notify parent (show login)
+      setOtpMsg("✅ Verified! Redirecting to login...")
+      setTimeout(() => {
+        setOtpOpen(false)
+        onSignupSuccess()
+      }, 700)
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail
+      setOtpError(detail || (err?.message || "OTP verification failed"))
+    } finally {
+      setOtpLoading(false)
     }
   }
 
@@ -204,6 +236,72 @@ export function SignupPage({ onLoginClick, onSignupSuccess }: SignupPageProps) {
           </div>
         </CardContent>
       </Card>
-    </div>
+        {/* OTP MODAL */}
+        {otpOpen && (
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(0,0,0,0.45)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 16,
+              zIndex: 9999,
+            }}
+            onClick={() => { setOtpOpen(false); setOtp(""); setOtpError(null); setOtpMsg(null); }}
+          >
+            <div
+              style={{
+                width: "100%",
+                maxWidth: 420,
+                background: "white",
+                borderRadius: 12,
+                padding: 16,
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>Verify OTP</h3>
+                <button onClick={() => { setOtpOpen(false); setOtp(""); setOtpError(null); setOtpMsg(null); }} style={{ border: "none", background: "transparent" }}>
+                  ✕
+                </button>
+              </div>
+
+              <p style={{ marginTop: 10, marginBottom: 10, opacity: 0.8 }}>
+                Enter the OTP sent to <b>{form.email}</b>
+              </p>
+
+              <input
+                value={otp}
+                onChange={(e) => setOtp(e.target.value)}
+                placeholder="6-digit OTP"
+                inputMode="numeric"
+                style={{
+                  width: "100%",
+                  padding: 12,
+                  letterSpacing: 2,
+                  marginBottom: 12,
+                }}
+              />
+
+              <button
+                onClick={handleVerifyOtp}
+                disabled={otpLoading || otp.trim().length === 0}
+                style={{ width: "100%", padding: 10, fontWeight: 700 }}
+              >
+                {otpLoading ? "Verifying..." : "Verify"}
+              </button>
+
+              {otpMsg && <p style={{ marginTop: 10, color: "green" }}>{otpMsg}</p>}
+              {otpError && <p style={{ marginTop: 10, color: "crimson" }}>❌ {otpError}</p>}
+
+              <p style={{ marginTop: 10, fontSize: 13, opacity: 0.7 }}>
+                Didn’t get the code? Check spam/junk.
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
   )
 }
