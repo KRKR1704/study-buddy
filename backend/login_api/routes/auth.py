@@ -3,7 +3,8 @@
 from fastapi import APIRouter, HTTPException
 from models.user_model import UserSignup, UserLogin, UserVerifyOTP
 from utils.auth_utils import hash_password, verify_password, create_access_token
-from config.db import user_collection
+from config.db import user_collection, pending_signup_collection
+from pymongo.errors import DuplicateKeyError
 from datetime import datetime, timedelta
 import os
 from dotenv import load_dotenv
@@ -23,34 +24,35 @@ user_collection.create_index("email", unique=True)
 
 @auth_router.post("/signup")
 def signup(user: UserSignup):
-    # Check if username or email already exists
-    if user_collection.find_one({"username": user.username}):
-        raise HTTPException(status_code=400, detail="Username already exists")
-    if user_collection.find_one({"email": user.email}):
-        raise HTTPException(status_code=400, detail="Email already in use")
+    # Block if an existing user already has the username/email
+    if user_collection.find_one({"username": user.username}) or user_collection.find_one({"email": user.email}):
+        raise HTTPException(status_code=400, detail="Username or email already exists")
 
-    # Hash password before saving
-    hashed_pw = hash_password(user.password)
-    user_dict = user.dict()
-    user_dict["password"] = hashed_pw
-
-    # Add verification fields (OTP)
+    # Prepare pending signup (do not create real user yet)
     otp = generate_otp()
-    user_dict["is_verified"] = False
-    user_dict["email_otp"] = otp
-    user_dict["otp_expires_at"] = datetime.utcnow() + timedelta(minutes=10)
-    user_dict["created_at"] = datetime.utcnow()
+    now = datetime.utcnow()
+    pending_doc = {
+        "username": user.username,
+        "email": user.email,
+        "password": hash_password(user.password),
+        "email_otp": otp,
+        "otp_expires_at": now + timedelta(minutes=10),
+        "created_at": now,
+    }
 
-    # Save user to database
-    res = user_collection.insert_one(user_dict)
+    try:
+        pending_signup_collection.update_one({"email": user.email}, {"$set": pending_doc}, upsert=True)
+    except DuplicateKeyError:
+        raise HTTPException(status_code=400, detail="Username already exists")
 
-    # Send OTP email (best-effort) — log failures so we can debug
+    # Send OTP — fail hard so the user knows if email didn't send
     try:
         send_otp_email(user.email, otp)
     except Exception as e:
         print("❌ OTP email failed:", str(e))
+        raise HTTPException(status_code=500, detail="Failed to send OTP email. Try again.")
 
-    return {"message": "OTP sent to your email", "user_id": str(res.inserted_id)}
+    return {"message": "OTP sent to your email"}
 
 
 @auth_router.get("/check")
@@ -89,32 +91,59 @@ def login(credentials: UserLogin):
 
 @auth_router.post("/verify-otp")
 def verify_otp(payload: UserVerifyOTP):
-    user = user_collection.find_one({"email": payload.email})
+    pending = pending_signup_collection.find_one({"email": payload.email})
 
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    if not pending:
+        raise HTTPException(status_code=404, detail="No pending signup found. Please sign up again.")
 
-    if user.get("is_verified"):
-        return {"message": "Already verified"}
-
-    if user.get("email_otp") != payload.otp:
+    if pending.get("email_otp") != payload.otp:
         raise HTTPException(status_code=400, detail="Invalid OTP")
 
-    expires = user.get("otp_expires_at")
+    expires = pending.get("otp_expires_at")
     if not expires or datetime.utcnow() > expires:
-        raise HTTPException(status_code=400, detail="OTP expired")
+        raise HTTPException(status_code=400, detail="OTP expired. Please request a new OTP.")
 
-    user_collection.update_one(
-        {"_id": user["_id"]},
-        {"$set": {"is_verified": True}, "$unset": {"email_otp": "", "otp_expires_at": ""}}
-    )
+    # Safety: ensure not already created
+    if user_collection.find_one({"email": payload.email}) or user_collection.find_one({"username": pending["username"]}):
+        pending_signup_collection.delete_one({"_id": pending["_id"]})
+        raise HTTPException(status_code=400, detail="Account already exists. Please login.")
+
+    user_doc = {
+        "username": pending["username"],
+        "email": pending["email"],
+        "password": pending["password"],
+        "is_verified": True,
+        "created_at": pending.get("created_at", datetime.utcnow()),
+    }
+
+    user_collection.insert_one(user_doc)
+    pending_signup_collection.delete_one({"_id": pending["_id"]})
 
     try:
-        send_welcome_email(user["email"])
+        send_welcome_email(user_doc["email"])
     except Exception as e:
         print("❌ Welcome email failed:", str(e))
 
     return {"message": "Email verified successfully"}
+
+
+@auth_router.post("/resend-otp")
+def resend_otp(email: str):
+    pending = pending_signup_collection.find_one({"email": email})
+    if not pending:
+        raise HTTPException(status_code=404, detail="No pending signup found. Please sign up again.")
+
+    otp = generate_otp()
+    expires = datetime.utcnow() + timedelta(minutes=10)
+    pending_signup_collection.update_one({"_id": pending["_id"]}, {"$set": {"email_otp": otp, "otp_expires_at": expires}})
+
+    try:
+        send_otp_email(email, otp)
+    except Exception as e:
+        print("❌ Resend OTP failed:", str(e))
+        raise HTTPException(status_code=500, detail="Failed to resend OTP. Try again.")
+
+    return {"message": "OTP resent"}
 
 
 @auth_router.post("/forgot-password")

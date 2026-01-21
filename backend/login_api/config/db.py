@@ -19,3 +19,4 @@ fs = GridFS(_sync_db)
 # Synchronous collections for parts of the code that use pymongo sync API
 user_collection = _sync_db["users"]
 history_collection = _sync_db["history"]
+pending_signup_collection = _sync_db["pending_signups"]

@@ -38,6 +38,8 @@ export function SignupPage({ onLoginClick, onSignupSuccess }: SignupPageProps) {
   const [otpLoading, setOtpLoading] = useState(false)
   const [otpError, setOtpError] = useState<string | null>(null)
   const [otpMsg, setOtpMsg] = useState<string | null>(null)
+  const [resendLoading, setResendLoading] = useState(false)
+  const [resendMsg, setResendMsg] = useState<string | null>(null)
 
   const handleSignup = async () => {
     // Basic client-side validation
@@ -240,36 +242,31 @@ export function SignupPage({ onLoginClick, onSignupSuccess }: SignupPageProps) {
         </CardContent>
       </Card>
         {/* OTP MODAL */}
-        {otpOpen && (
+      {otpOpen && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.45)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+            zIndex: 9999,
+          }}
+        >
           <div
             style={{
-              position: "fixed",
-              inset: 0,
-              background: "rgba(0,0,0,0.45)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
+              width: "100%",
+              maxWidth: 420,
+              background: "white",
+              borderRadius: 12,
               padding: 16,
-              zIndex: 9999,
             }}
-            onClick={() => { setOtpOpen(false); setOtp(""); setOtpError(null); setOtpMsg(null); }}
           >
-            <div
-              style={{
-                width: "100%",
-                maxWidth: 420,
-                background: "white",
-                borderRadius: 12,
-                padding: 16,
-              }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>Verify OTP</h3>
-                <button onClick={() => { setOtpOpen(false); setOtp(""); setOtpError(null); setOtpMsg(null); }} style={{ border: "none", background: "transparent" }}>
-                  ✕
-                </button>
-              </div>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+              <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>Verify OTP</h3>
+            </div>
 
               <p style={{ marginTop: 10, marginBottom: 10, opacity: 0.8 }}>
                 Enter the OTP sent to <b>{form.email}</b>
@@ -295,6 +292,29 @@ export function SignupPage({ onLoginClick, onSignupSuccess }: SignupPageProps) {
               >
                 {otpLoading ? "Verifying..." : "Verify"}
               </button>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  setResendMsg(null)
+                  setResendLoading(true)
+                  try {
+                    const res = await api.post('/auth/resend-otp', null, { params: { email: form.email } })
+                    setResendMsg('✅ OTP resent. Check your email.')
+                  } catch (err: any) {
+                    const detail = err?.response?.data?.detail
+                    setResendMsg(detail || (err?.message || 'Failed to resend OTP'))
+                  } finally {
+                    setResendLoading(false)
+                  }
+                }}
+                disabled={resendLoading}
+                style={{ width: "100%", padding: 10, fontWeight: 700, marginTop: 10 }}
+              >
+                {resendLoading ? 'Resending...' : 'Resend OTP'}
+              </button>
+
+              {resendMsg && <p style={{ marginTop: 10 }}>{resendMsg}</p>}
 
               {otpMsg && <p style={{ marginTop: 10, color: "green" }}>{otpMsg}</p>}
               {otpError && <p style={{ marginTop: 10, color: "crimson" }}>❌ {otpError}</p>}

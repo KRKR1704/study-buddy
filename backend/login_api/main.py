@@ -13,7 +13,7 @@ from routes.summarizer import router as summarizer_router
 from routes.account import account_router
 
 # DB collection for startup index creation
-from config.db import user_collection
+from config.db import user_collection, pending_signup_collection
 
 app = FastAPI()
 
@@ -57,6 +57,15 @@ def ensure_indexes():
     try:
         user_collection.create_index("username", unique=True)
         user_collection.create_index("email", unique=True)
+        # pending signups: ensure unique indexes and TTL on otp_expires_at
+        try:
+            pending_signup_collection.create_index("username", unique=True)
+            pending_signup_collection.create_index("email", unique=True)
+            # TTL index on otp_expires_at (must be a Date field)
+            pending_signup_collection.create_index("otp_expires_at", expireAfterSeconds=0)
+            print("✅ Pending signup indexes ensured")
+        except Exception as e:
+            print("⚠️ Failed to create pending signup indexes:", repr(e))
         print("✅ Mongo indexes ensured: username, email")
     except Exception as e:
         # Don't crash the server; log so you can see it in Render logs
