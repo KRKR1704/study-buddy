@@ -41,3 +41,6 @@ python-jose[cryptography]>=3.3.0
 
 # Testing
 pytest>=7.0
+
+# Email provider SDK
+resend>=0.6

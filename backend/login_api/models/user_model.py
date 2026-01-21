@@ -15,3 +15,8 @@ class UserSignup(BaseModel):
 class UserLogin(BaseModel):
     username: str
     password: str
+
+
+class UserVerifyOTP(BaseModel):
+    email: EmailStr
+    otp: str

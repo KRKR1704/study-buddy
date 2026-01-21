@@ -1,12 +1,15 @@
 # routes/auth.py
 
 from fastapi import APIRouter, HTTPException
-from models.user_model import UserSignup, UserLogin
+from models.user_model import UserSignup, UserLogin, UserVerifyOTP
 from utils.auth_utils import hash_password, verify_password, create_access_token
 from config.db import user_collection
 from datetime import datetime, timedelta
 import os
 from dotenv import load_dotenv
+
+from utils.otp import generate_otp
+from services.email_service import send_otp_email, send_welcome_email
 
 load_dotenv()
 RESET_TOKEN_EXPIRE_MINUTES = int(os.getenv("RESET_TOKEN_EXPIRE_MINUTES", "15"))
@@ -20,7 +23,7 @@ user_collection.create_index("email", unique=True)
 
 @auth_router.post("/signup")
 def signup(user: UserSignup):
-    # Check if username already exists
+    # Check if username or email already exists
     if user_collection.find_one({"username": user.username}):
         raise HTTPException(status_code=400, detail="Username already exists")
     if user_collection.find_one({"email": user.email}):
@@ -31,10 +34,23 @@ def signup(user: UserSignup):
     user_dict = user.dict()
     user_dict["password"] = hashed_pw
 
+    # Add verification fields (OTP)
+    otp = generate_otp()
+    user_dict["is_verified"] = False
+    user_dict["email_otp"] = otp
+    user_dict["otp_expires_at"] = datetime.utcnow() + timedelta(minutes=10)
+    user_dict["created_at"] = datetime.utcnow()
+
     # Save user to database
     res = user_collection.insert_one(user_dict)
 
-    return {"message": "User signed up successfully", "user_id": str(res.inserted_id)}
+    # Send OTP email (best-effort)
+    try:
+        send_otp_email(user.email, otp)
+    except Exception:
+        pass
+
+    return {"message": "OTP sent to your email", "user_id": str(res.inserted_id)}
 
 
 @auth_router.get("/check")
@@ -55,6 +71,10 @@ def login(credentials: UserLogin):
     if not user or not verify_password(credentials.password, user["password"]):
         raise HTTPException(status_code=401, detail="Incorrect username or password")
 
+    # Block login until email verified
+    if not user.get("is_verified", False):
+        raise HTTPException(status_code=403, detail="Please verify your email before logging in")
+
     # Generate JWT token including user_id
     access_token = create_access_token({"sub": credentials.username, "user_id": str(user.get("_id") or user.get("id"))})
 
@@ -64,6 +84,37 @@ def login(credentials: UserLogin):
         "token_type": "bearer",
         "user_id": str(user.get("_id") or user.get("id"))
     }
+
+
+
+@auth_router.post("/verify-otp")
+def verify_otp(payload: UserVerifyOTP):
+    user = user_collection.find_one({"email": payload.email})
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if user.get("is_verified"):
+        return {"message": "Already verified"}
+
+    if user.get("email_otp") != payload.otp:
+        raise HTTPException(status_code=400, detail="Invalid OTP")
+
+    expires = user.get("otp_expires_at")
+    if not expires or datetime.utcnow() > expires:
+        raise HTTPException(status_code=400, detail="OTP expired")
+
+    user_collection.update_one(
+        {"_id": user["_id"]},
+        {"$set": {"is_verified": True}, "$unset": {"email_otp": "", "otp_expires_at": ""}}
+    )
+
+    try:
+        send_welcome_email(user["email"])
+    except Exception:
+        pass
+
+    return {"message": "Email verified successfully"}
 
 
 @auth_router.post("/forgot-password")
