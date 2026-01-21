@@ -117,6 +117,29 @@ def verify_otp(payload: UserVerifyOTP):
     return {"message": "Email verified successfully"}
 
 
+
+@auth_router.get("/test-email")
+def test_email():
+    """Send a simple test email using the Resend client to help debug delivery issues.
+
+    Set `TEST_SEND_TO` in the backend `.env` to control the recipient (defaults to your email placeholder).
+    """
+    test_to = os.getenv("TEST_SEND_TO", "yourtestemail@example.com")
+    try:
+        # Use the client exposed by the email service to send a direct test message
+        from services.email_service import client, FROM_EMAIL
+
+        resp = client.emails.send(
+            from_=FROM_EMAIL,
+            to=[test_to],
+            subject="Test Email from Study Buddy Backend",
+            text="This is a test from the Study Buddy backend."
+        )
+        return {"status": "sent", "response": resp}
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
+
+
 @auth_router.post("/forgot-password")
 def forgot_password(email: str):
     """Generate a password reset token and (dev) return it. In production this should email the user."""
